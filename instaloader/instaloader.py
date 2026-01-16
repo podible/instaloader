@@ -146,9 +146,11 @@ class _ArbitraryItemFormatter(string.Formatter):
     def get_field(self, field_name, args, kwargs):
         """Override to support fallback syntax like {key1|key2|key3}."""
         if isinstance(field_name, str) and '|' in field_name:
-            for candidate in (part.strip() for part in field_name.split('|')):
-                if not candidate:
-                    continue
+            candidates = [part.strip() for part in field_name.split('|') if part.strip()]
+            # Special case: if first candidate is 'fileId' and item is Post, preserve literal
+            if candidates and candidates[0] == 'fileId' and isinstance(self._item, Post):
+                return "{" + field_name + "}", field_name
+            for candidate in candidates:
                 try:
                     value, used_key = super().get_field(candidate, args, kwargs)
                 except (KeyError, AttributeError, IndexError):
@@ -758,6 +760,9 @@ class Instaloader:
         dirname = _PostPathFormatter(post, self.sanitize_paths).format(self.dirname_pattern, target=target)
         filename_template = os.path.join(dirname, self.format_filename(post, target=target))
         filename = self.__prepare_filename(filename_template, lambda: post.url)
+        # Replace {fileId|...} with mediaid for non-sidecar posts
+        if post.typename != 'GraphSidecar':
+            filename = re.sub(r'\{fileId(?:\|[^}]*)?\}', str(post.mediaid), filename)
 
         # Download the image(s) / video thumbnail and videos within sidecars if desired
         downloaded = True
@@ -784,7 +789,7 @@ class Instaloader:
                             sidecar_filename = self.__prepare_filename(filename_template,
                                                                        lambda: sidecar_node.display_url)
                             if sidecar_node.id:
-                                sidecar_filename = sidecar_filename.replace('{fileId}', str(sidecar_node.id))
+                                sidecar_filename = re.sub(r'\{fileId(?:\|[^}]*)?\}', str(sidecar_node.id), sidecar_filename)
                             # Download sidecar picture or video thumbnail (--no-pictures implies --no-video-thumbnails)
                             downloaded &= self.download_pic(filename=sidecar_filename, url=sidecar_node.display_url,
                                                             mtime=post.date_local, filename_suffix=suffix)
@@ -793,7 +798,7 @@ class Instaloader:
                             sidecar_filename = self.__prepare_filename(filename_template,
                                                                        lambda: video_url)
                             if sidecar_node.id:
-                                sidecar_filename = sidecar_filename.replace('{fileId}', str(sidecar_node.id))
+                                sidecar_filename = re.sub(r'\{fileId(?:\|[^}]*)?\}', str(sidecar_node.id), sidecar_filename)
                             # Download sidecar video if desired
                             downloaded &= self.download_pic(filename=sidecar_filename, url=video_url,
                                                             mtime=post.date_local, filename_suffix=suffix)
