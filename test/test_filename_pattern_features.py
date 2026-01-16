@@ -58,5 +58,27 @@ class TestNewFeatures(unittest.TestCase):
         node = StructPostSidecarNode(is_video=False, display_url="url", video_url=None, id="test_id")
         self.assertEqual(node.id, "test_id")
 
+    def test_fallback_syntax(self):
+        # Test {fileId|mediaid} fallback for Post (fileId unavailable, should use mediaid)
+        post = MagicMock(spec=Post)
+        post.mediaid = 123456789
+        post_formatter = _ArbitraryItemFormatter(post)
+        self.assertEqual(post_formatter.format("{fileId|mediaid}"), "123456789")
+
+        # Test {fileId|mediaid} for SidecarNode (fileId available, should use fileId)
+        node = StructPostSidecarNode(is_video=False, display_url="url", video_url=None, id="99999")
+        node_formatter = _ArbitraryItemFormatter(node)
+        self.assertEqual(node_formatter.format("{fileId|mediaid}"), "99999")
+
+        # Test multi-level fallback {a|b|c}
+        class MockItem:
+            c = "fallback_c"
+        item = MockItem()
+        formatter = _ArbitraryItemFormatter(item)
+        self.assertEqual(formatter.format("{a|b|c}"), "fallback_c")
+
+        # Test all fallbacks invalid - returns literal
+        self.assertEqual(formatter.format("{x|y|z}"), "{x|y|z}")
+
 if __name__ == '__main__':
     unittest.main()

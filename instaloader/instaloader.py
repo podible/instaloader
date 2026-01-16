@@ -67,8 +67,11 @@ def get_default_stamps_filename() -> str:
 def format_string_contains_key(format_string: str, key: str) -> bool:
     # pylint:disable=unused-variable
     for literal_text, field_name, format_spec, conversion in string.Formatter().parse(format_string):
-        if field_name and (field_name == key or field_name.startswith(key + '.')):
-            return True
+        if not field_name:
+            continue
+        for part in (p.strip() for p in field_name.split('|')):
+            if part and (part == key or part.startswith(key + '.')):
+                return True
     return False
 
 
@@ -139,6 +142,27 @@ class _ArbitraryItemFormatter(string.Formatter):
         if hasattr(self._item, key):
             return getattr(self._item, key)
         return super().get_value(key, args, kwargs)
+
+    def get_field(self, field_name, args, kwargs):
+        """Override to support fallback syntax like {key1|key2|key3}."""
+        if isinstance(field_name, str) and '|' in field_name:
+            for candidate in (part.strip() for part in field_name.split('|')):
+                if not candidate:
+                    continue
+                try:
+                    value, used_key = super().get_field(candidate, args, kwargs)
+                except (KeyError, AttributeError, IndexError):
+                    continue
+                if self._is_unresolved_literal(candidate, value):
+                    continue
+                return value, used_key
+            return "{" + field_name + "}", field_name
+        return super().get_field(field_name, args, kwargs)
+
+    @staticmethod
+    def _is_unresolved_literal(candidate, value):
+        """Check if value is an unresolved literal placeholder."""
+        return isinstance(value, str) and value == "{" + candidate + "}"
 
     def format_field(self, value, format_spec):
         """Override :meth:`string.Formatter.format_field` to have our
