@@ -206,6 +206,24 @@ The following tokens are defined for usage with
 
       {date_utc:%Y-%m-%d_%H-%M-%S}
 
+   Timezone offset can be specified by appending ``+N`` or ``-N`` (hours) to the
+   date token. For example, to use UTC+8 timezone::
+
+      {date_utc+8:%Y-%m-%d_%H-%M-%S}
+
+   Or to use UTC-5 timezone::
+
+      {date-5:%Y-%m-%d_%H-%M-%S}
+
+- ``{date_local}``
+   Creation time in local timezone. Supports the same formatting options and
+   timezone offset syntax as ``{date_utc}``.
+
+- ``{fileId}``
+   Unique media ID (pk) for sidecar (carousel) items. Useful when downloading
+   multi-image posts and you need unique identifiers for each image/video.
+   Not available for :option:`--title-pattern`.
+
 - ``{typename}``
    Type of media being saved, such as GraphImage, GraphStoryVideo, profile_pic,
    etc.

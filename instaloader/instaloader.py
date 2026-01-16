@@ -8,7 +8,7 @@ import string
 import sys
 import tempfile
 from contextlib import contextmanager, suppress
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from io import BytesIO
 from pathlib import Path
@@ -121,6 +121,21 @@ class _ArbitraryItemFormatter(string.Formatter):
         """Override to substitute {ATTRIBUTE} by attributes of our _item."""
         if key == 'filename' and isinstance(self._item, (Post, StoryItem, PostSidecarNode, TitlePic)):
             return "{filename}"
+        if key == 'fileId':
+            if isinstance(self._item, Post):
+                return "{fileId}"
+            if isinstance(self._item, PostSidecarNode):
+                return self._item.id
+        if key.startswith('date'):
+            match = re.match(r'^date(?P<suffix>_utc|_local)?(?P<offset>[+-]\d+)?$', key)
+            if match:
+                offset_str = match.group('offset')
+                suffix = match.group('suffix')
+                base_attr = 'date_local' if suffix == '_local' else 'date_utc'
+                if offset_str and hasattr(self._item, base_attr):
+                    val = getattr(self._item, base_attr)
+                    if isinstance(val, datetime):
+                        return val + timedelta(hours=int(offset_str))
         if hasattr(self._item, key):
             return getattr(self._item, key)
         return super().get_value(key, args, kwargs)
@@ -702,8 +717,8 @@ class Instaloader:
                 return True
 
         def _all_already_downloaded(path_base, is_videos_enumerated) -> bool:
-            if '{filename}' in self.filename_pattern:
-                # full URL needed to evaluate actual filename, cannot determine at
+            if '{filename}' in self.filename_pattern or '{fileId}' in self.filename_pattern:
+                # full URL or fileId needed to evaluate actual filename, cannot determine at
                 # this point if all sidecar nodes were already downloaded.
                 return False
             for idx, is_video in is_videos_enumerated:
@@ -735,13 +750,15 @@ class Instaloader:
                             start=self.slide_start % post.mediacount + 1
                     ):
                         suffix: Optional[str] = str(edge_number)
-                        if '{filename}' in self.filename_pattern:
+                        if '{filename}' in self.filename_pattern or '{fileId}' in self.filename_pattern:
                             suffix = None
                         video_url = sidecar_node.video_url
                         if self.download_pictures and (video_url is None or self.download_video_thumbnails):
                             # pylint:disable=cell-var-from-loop
                             sidecar_filename = self.__prepare_filename(filename_template,
                                                                        lambda: sidecar_node.display_url)
+                            if sidecar_node.id:
+                                sidecar_filename = sidecar_filename.replace('{fileId}', str(sidecar_node.id))
                             # Download sidecar picture or video thumbnail (--no-pictures implies --no-video-thumbnails)
                             downloaded &= self.download_pic(filename=sidecar_filename, url=sidecar_node.display_url,
                                                             mtime=post.date_local, filename_suffix=suffix)
@@ -749,6 +766,8 @@ class Instaloader:
                             # pylint:disable=cell-var-from-loop
                             sidecar_filename = self.__prepare_filename(filename_template,
                                                                        lambda: video_url)
+                            if sidecar_node.id:
+                                sidecar_filename = sidecar_filename.replace('{fileId}', str(sidecar_node.id))
                             # Download sidecar video if desired
                             downloaded &= self.download_pic(filename=sidecar_filename, url=video_url,
                                                             mtime=post.date_local, filename_suffix=suffix)
