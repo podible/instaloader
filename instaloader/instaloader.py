@@ -760,9 +760,8 @@ class Instaloader:
         dirname = _PostPathFormatter(post, self.sanitize_paths).format(self.dirname_pattern, target=target)
         filename_template = os.path.join(dirname, self.format_filename(post, target=target))
         filename = self.__prepare_filename(filename_template, lambda: post.url)
-        # Replace {fileId|...} with mediaid for non-sidecar posts
-        if post.typename != 'GraphSidecar':
-            filename = re.sub(r'\{fileId(?:\|[^}]*)?\}', str(post.mediaid), filename)
+        # Replace {fileId|...} with mediaid for base filename (used for JSON, caption, etc.)
+        filename = re.sub(r'\{fileId(?:\|[^}]*)?\}', str(post.mediaid), filename)
 
         # Download the image(s) / video thumbnail and videos within sidecars if desired
         downloaded = True
