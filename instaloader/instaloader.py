@@ -741,7 +741,8 @@ class Instaloader:
                 return True
 
         def _all_already_downloaded(path_base, is_videos_enumerated) -> bool:
-            if '{filename}' in self.filename_pattern or '{fileId}' in self.filename_pattern:
+            if (format_string_contains_key(self.filename_pattern, 'filename') or
+                    format_string_contains_key(self.filename_pattern, 'fileId')):
                 # full URL or fileId needed to evaluate actual filename, cannot determine at
                 # this point if all sidecar nodes were already downloaded.
                 return False
@@ -774,7 +775,8 @@ class Instaloader:
                             start=self.slide_start % post.mediacount + 1
                     ):
                         suffix: Optional[str] = str(edge_number)
-                        if '{filename}' in self.filename_pattern or '{fileId}' in self.filename_pattern:
+                        if (format_string_contains_key(self.filename_pattern, 'filename') or
+                                format_string_contains_key(self.filename_pattern, 'fileId')):
                             suffix = None
                         video_url = sidecar_node.video_url
                         if self.download_pictures and (video_url is None or self.download_video_thumbnails):
