@@ -80,5 +80,31 @@ class TestNewFeatures(unittest.TestCase):
         # Test all fallbacks invalid - returns literal
         self.assertEqual(formatter.format("{x|y|z}"), "{x|y|z}")
 
+    def test_target_base_placeholder(self):
+        # Test target_base with tagged posts path
+        class MockItem:
+            pass
+        item = MockItem()
+        formatter = _ArbitraryItemFormatter(item)
+
+        # Test username/:tagged -> username
+        self.assertEqual(formatter.format("{target_base}", target="mm.91_/:tagged"), "mm.91_")
+
+        # Test hashtag with # prefix
+        self.assertEqual(formatter.format("{target_base}", target="#hashtag"), "hashtag")
+
+        # Test feed with : prefix
+        self.assertEqual(formatter.format("{target_base}", target=":feed"), "feed")
+
+        # Test location with % prefix
+        self.assertEqual(formatter.format("{target_base}", target="%12345"), "12345")
+
+        # Test plain username
+        self.assertEqual(formatter.format("{target_base}", target="username"), "username")
+
+        # Test with Path object
+        from pathlib import Path
+        self.assertEqual(formatter.format("{target_base}", target=Path("mm.91_") / ":tagged"), "mm.91_")
+
 if __name__ == '__main__':
     unittest.main()

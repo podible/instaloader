@@ -181,6 +181,12 @@ The following tokens are defined for usage with
 - ``{target}``
    Target name (as given in Instaloader command line)
 
+- ``{target_base}``
+   Base target name without path suffixes or special prefixes. For example,
+   when downloading tagged posts of ``username``, ``{target}`` is
+   ``username/:tagged`` while ``{target_base}`` is ``username``. Similarly,
+   for hashtags ``#example``, ``{target_base}`` is ``example``.
+
 - ``{profile}`` (same as ``{owner_username}``)
    Owner of the Post / StoryItem / ProfilePic. For hashtag profile pics and
    highlight covers, equivalent to ``{target}``.

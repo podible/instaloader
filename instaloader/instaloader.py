@@ -139,6 +139,19 @@ class _ArbitraryItemFormatter(string.Formatter):
                     val = getattr(self._item, base_attr)
                     if isinstance(val, datetime):
                         return val + timedelta(hours=int(offset_str))
+        if key == 'target_base':
+            target = kwargs.get('target', '')
+            if target:
+                target_str = str(target)
+                # Handle path-like targets (e.g., "username/:tagged" or Path objects)
+                parts = Path(target_str).parts
+                if parts:
+                    first_part = parts[0]
+                    # Remove special prefixes: #, %, :
+                    if first_part and first_part[0] in '#%:':
+                        first_part = first_part[1:]
+                    return first_part
+            return ''
         if hasattr(self._item, key):
             return getattr(self._item, key)
         return super().get_value(key, args, kwargs)
@@ -286,7 +299,8 @@ class Instaloader:
             self.title_pattern = title_pattern
         else:
             if (format_string_contains_key(self.dirname_pattern, 'profile') or
-                format_string_contains_key(self.dirname_pattern, 'target')):
+                format_string_contains_key(self.dirname_pattern, 'target') or
+                format_string_contains_key(self.dirname_pattern, 'target_base')):
                 self.title_pattern = '{date_utc}_UTC_{typename}'
             else:
                 self.title_pattern = '{target}_{date_utc}_UTC_{typename}'
@@ -329,6 +343,29 @@ class Instaloader:
                     raise InvalidArgumentException("Invalid data for --slide parameter.")
             else:
                 raise InvalidArgumentException("Invalid data for --slide parameter.")
+
+    @staticmethod
+    def _compute_target_base(target: Union[str, Path, None]) -> str:
+        """Compute target_base from target by removing path suffixes and special prefixes."""
+        if not target:
+            return ''
+        target_str = str(target)
+        parts = Path(target_str).parts
+        if parts:
+            first_part = parts[0]
+            if first_part and first_part[0] in '#%:':
+                return first_part[1:]
+            return first_part
+        return ''
+
+    def _format_dirname(self, profile: Optional[str] = None, target: Union[str, Path, None] = None) -> str:
+        """Format dirname_pattern with profile, target, and target_base."""
+        target_base = self._compute_target_base(target)
+        return self.dirname_pattern.format(
+            profile=profile if profile else '',
+            target=target if target else '',
+            target_base=target_base
+        )
 
     @contextmanager
     def anonymous_copy(self):
@@ -548,12 +585,13 @@ class Instaloader:
 
         .. versionadded:: 4.5"""
         if ((format_string_contains_key(self.dirname_pattern, 'profile') or
-             format_string_contains_key(self.dirname_pattern, 'target'))):
+             format_string_contains_key(self.dirname_pattern, 'target') or
+             format_string_contains_key(self.dirname_pattern, 'target_base'))):
             profile_str = owner_profile.username.lower() if owner_profile is not None else target
-            return os.path.join(self.dirname_pattern.format(profile=profile_str, target=target),
+            return os.path.join(self._format_dirname(profile=profile_str, target=target),
                                 '{0}_{1}.{2}'.format(identifier, name_suffix, extension))
         else:
-            return os.path.join(self.dirname_pattern.format(),
+            return os.path.join(self._format_dirname(),
                                 '{0}_{1}_{2}.{3}'.format(target, identifier, name_suffix, extension))
 
     @_retry_on_connection_error
@@ -1303,8 +1341,7 @@ class Instaloader:
             self.posts_download_loop(hashtag.get_posts_resumable(), target, fast_update, post_filter,
                                      max_count=max_count)
         if self.save_metadata:
-            json_filename = '{0}/{1}'.format(self.dirname_pattern.format(profile=target,
-                                                                         target=target),
+            json_filename = '{0}/{1}'.format(self._format_dirname(profile=target, target=target),
                                              target)
             self.save_metadata_json(json_filename, hashtag)
 
@@ -1380,12 +1417,13 @@ class Instaloader:
 
     def _get_id_filename(self, profile_name: str) -> str:
         if ((format_string_contains_key(self.dirname_pattern, 'profile') or
-             format_string_contains_key(self.dirname_pattern, 'target'))):
-            return os.path.join(self.dirname_pattern.format(profile=profile_name.lower(),
-                                                            target=profile_name.lower()),
+             format_string_contains_key(self.dirname_pattern, 'target') or
+             format_string_contains_key(self.dirname_pattern, 'target_base'))):
+            return os.path.join(self._format_dirname(profile=profile_name.lower(),
+                                                     target=profile_name.lower()),
                                 'id')
         else:
-            return os.path.join(self.dirname_pattern.format(),
+            return os.path.join(self._format_dirname(),
                                 '{0}_id'.format(profile_name.lower()))
 
     def load_profile_id(self, profile_name: str) -> Optional[int]:
@@ -1407,8 +1445,8 @@ class Instaloader:
 
         .. versionadded:: 4.0.6
         """
-        os.makedirs(self.dirname_pattern.format(profile=profile.username,
-                                                target=profile.username), exist_ok=True)
+        os.makedirs(self._format_dirname(profile=profile.username,
+                                         target=profile.username), exist_ok=True)
         with open(self._get_id_filename(profile.username), 'w') as text_file:
             text_file.write(str(profile.userid) + "\n")
             self.context.log("Stored ID {0} for profile {1}.".format(profile.userid, profile.username))
@@ -1454,14 +1492,15 @@ class Instaloader:
                 self.context.error("Profile {0} has changed its name to {1}.".format(profile_name, newname))
                 if latest_stamps is None:
                     if ((format_string_contains_key(self.dirname_pattern, 'profile') or
-                         format_string_contains_key(self.dirname_pattern, 'target'))):
-                        os.rename(self.dirname_pattern.format(profile=profile_name.lower(),
-                                                              target=profile_name.lower()),
-                                  self.dirname_pattern.format(profile=newname.lower(),
-                                                              target=newname.lower()))
+                         format_string_contains_key(self.dirname_pattern, 'target') or
+                         format_string_contains_key(self.dirname_pattern, 'target_base'))):
+                        os.rename(self._format_dirname(profile=profile_name.lower(),
+                                                       target=profile_name.lower()),
+                                  self._format_dirname(profile=newname.lower(),
+                                                       target=newname.lower()))
                     else:
-                        os.rename('{0}/{1}_id'.format(self.dirname_pattern.format(), profile_name.lower()),
-                                  '{0}/{1}_id'.format(self.dirname_pattern.format(), newname.lower()))
+                        os.rename('{0}/{1}_id'.format(self._format_dirname(), profile_name.lower()),
+                                  '{0}/{1}_id'.format(self._format_dirname(), newname.lower()))
                 else:
                     latest_stamps.rename_profile(profile_name, newname)
                 return profile_from_id
@@ -1544,8 +1583,8 @@ class Instaloader:
 
                 # Save metadata as JSON if desired.
                 if self.save_metadata:
-                    json_filename = os.path.join(self.dirname_pattern.format(profile=profile_name,
-                                                                             target=profile_name),
+                    json_filename = os.path.join(self._format_dirname(profile=profile_name,
+                                                                      target=profile_name),
                                                  '{0}_{1}'.format(profile_name, profile.userid))
                     self.save_metadata_json(json_filename, profile)
 
@@ -1629,7 +1668,7 @@ class Instaloader:
 
         # Save metadata as JSON if desired.
         if self.save_metadata is not False:
-            json_filename = '{0}/{1}_{2}'.format(self.dirname_pattern.format(profile=profile_name, target=profile_name),
+            json_filename = '{0}/{1}_{2}'.format(self._format_dirname(profile=profile_name, target=profile_name),
                                                  profile_name, profile.userid)
             self.save_metadata_json(json_filename, profile)
 
