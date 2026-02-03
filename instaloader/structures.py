@@ -1065,6 +1065,12 @@ class Profile:
             normalized['has_requested_viewer'] = friendship.get('incoming_request', False)
         if 'requested_by_viewer' not in normalized:
             normalized['requested_by_viewer'] = friendship.get('outgoing_request', False)
+        if 'profile_pic_url_hd' not in normalized:
+            hd_info = normalized.get('hd_profile_pic_url_info')
+            if hd_info and 'url' in hd_info:
+                normalized['profile_pic_url_hd'] = hd_info['url']
+            elif 'profile_pic_url' in normalized:
+                normalized['profile_pic_url_hd'] = normalized['profile_pic_url']
         return normalized
 
     def _metadata(self, *keys) -> Any:
