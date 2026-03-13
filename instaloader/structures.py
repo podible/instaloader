@@ -933,8 +933,11 @@ class Profile:
         
         try:
             data = context.doc_id_graphql_query('7898261790222653', variables)
-            user_info = data["data"]["xdt_api__v1__feed__user_timeline_graphql_connection"]["edges"][0]["node"]["user"]
-            return cls(context, user_info)
+            for node_user in data["data"]["xdt_api__v1__feed__user_timeline_graphql_connection"]["edges"]:
+                user_info = node_user["node"]["user"]
+                if user_info['username'] == username:
+                    return cls(context, user_info)
+            raise ProfileNotExistsException()
         except Exception as e:
             raise ProfileNotExistsException("No profile found, the user may have blocked you (ID: " +
                                             str(username) + ").")
