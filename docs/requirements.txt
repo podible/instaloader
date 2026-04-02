@@ -1,2 +1,2 @@
-requests
+requests[socks]
 sphinx~=2.3
