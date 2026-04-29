@@ -925,7 +925,7 @@ class Profile:
         # return profile
         variables = {
             "data": {
-                "count": 1
+                "count": 3
             },
             "username": username,
             "__relay_internal__pv__PolarisFeedShareMenurelayprovider": False,
