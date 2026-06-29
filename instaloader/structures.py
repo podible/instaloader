@@ -391,11 +391,9 @@ class Post:
                         "is_video": item_type == 2,
                     }
                     item_candidates = (item.get("image_versions2") or {}).get("candidates") or []
-                    if item_candidates:
-                        node["display_url"] = item_candidates[0]["url"]
+                    node["display_url"] = item_candidates[0]["url"] if item_candidates else ""
                     item_videos = item.get("video_versions") or []
-                    if item_videos:
-                        node["video_url"] = item_videos[0]["url"]
+                    node["video_url"] = item_videos[0]["url"] if item_videos else None
                     if item.get("accessibility_caption") is not None:
                         node["accessibility_caption"] = item["accessibility_caption"]
                     carousel_nodes.append({"node": node})
