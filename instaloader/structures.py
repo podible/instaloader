@@ -324,7 +324,11 @@ class Post:
         if not self._full_metadata_dict:
             media_types = {1: "GraphImage", 2: "GraphVideo", 8: "GraphSidecar"}
             resp = self._context.doc_id_graphql_query(
-                "27128499623469141", {"shortcode": self.shortcode}
+                "27128499623469141",
+                {
+                    "shortcode": self.shortcode,
+                    "__relay_internal__pv__PolarisAIGMMediaWebLabelEnabledrelayprovider": False,
+                },
             )
             web_info = (resp.get("data") or {}).get("xdt_api__v1__media__shortcode__web_info") or {}
             items = web_info.get("items")
