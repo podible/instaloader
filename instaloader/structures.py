@@ -262,6 +262,26 @@ class Post:
         return fake_node
 
     @staticmethod
+    def _fetch_play_count_from_clips(context: 'InstaloaderContext', user_id: str,
+                                     shortcode: str) -> Optional[int]:
+        """Fetch play_count for a reel via the clips connection endpoint as a fallback."""
+        try:
+            resp = context.doc_id_graphql_query(
+                "27234427476213202",
+                {"data": {"include_feed_video": True, "page_size": 12,
+                           "target_user_id": str(user_id)}},
+            )
+            edges = ((resp.get("data") or {})
+                     .get("xdt_api__v1__clips__user__connection_v2") or {})
+            for edge in edges.get("edges") or []:
+                media = (edge.get("node") or {}).get("media") or {}
+                if media.get("code") == shortcode:
+                    return media.get("play_count")
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
     def shortcode_to_mediaid(code: str) -> int:
         if len(code) > 11:
             raise InvalidArgumentException("Wrong shortcode \"{0}\", unable to convert to mediaid.".format(code))
@@ -363,6 +383,12 @@ class Post:
                 pic_json["video_view_count"] = media["view_count"]
             if media.get("play_count") is not None:
                 pic_json["video_play_count"] = media["play_count"]
+            if media_type == 2 and pic_json.get("video_view_count") is None:
+                play_count = Post._fetch_play_count_from_clips(
+                    self._context, media["user"]["pk"], media["code"]
+                )
+                if play_count is not None:
+                    pic_json["video_play_count"] = play_count
             caption = media.get("caption")
             caption_text = caption.get("text") if isinstance(caption, dict) else None
             pic_json["edge_media_to_caption"] = (
@@ -678,7 +704,10 @@ class Post:
 
         .. versionadded:: 4.2.6"""
         if self.is_video:
-            return self._field('video_view_count')
+            try:
+                return self._field('video_view_count')
+            except KeyError:
+                return None
         return None
 
     @property
@@ -687,7 +716,10 @@ class Post:
 
         .. versionadded:: 4.14.3"""
         if self.is_video:
-            return self._field('video_play_count')
+            try:
+                return self._field('video_play_count')
+            except KeyError:
+                return None
         return None
 
     @property
