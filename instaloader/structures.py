@@ -1054,18 +1054,23 @@ class Profile:
         """
         if profile_id in context.profile_id_cache:
             return context.profile_id_cache[profile_id]
-        data = context.graphql_query('7c16654f22c819fb63d1183034a5162f',
-                                     {'user_id': str(profile_id),
-                                      'include_chaining': False,
-                                      'include_reel': True,
-                                      'include_suggested_users': False,
-                                      'include_logged_out_extras': False,
-                                      'include_highlight_reels': False})['data']['user']
-        if data:
-            profile = cls(context, data['reel']['owner'])
-        else:
+        resp = context.doc_id_graphql_query(
+            '26672929172408668',
+            {
+                "enable_integrity_filters": True,
+                "id": str(profile_id),
+                "__relay_internal__pv__PolarisCannesGuardianExperienceEnabledrelayprovider": True,
+                "__relay_internal__pv__PolarisCASB976ProfileEnabledrelayprovider": False,
+                "__relay_internal__pv__PolarisWebSchoolsEnabledrelayprovider": False,
+                "__relay_internal__pv__PolarisRepostsConsumptionEnabledrelayprovider": False,
+            },
+        )
+        user_data = (resp.get('data') or {}).get('user')
+        if not user_data:
             raise ProfileNotExistsException("No profile found, the user may have blocked you (ID: " +
                                             str(profile_id) + ").")
+        node = {'id': user_data.get('pk', str(profile_id)), 'username': user_data.get('username', '')}
+        profile = cls(context, node)
         context.profile_id_cache[profile_id] = profile
         return profile
 
@@ -1112,15 +1117,14 @@ class Profile:
                 if not user_id:
                     raise ProfileNotExistsException('Profile {} has no user ID.'.format(self.username))
                 variables = {
+                    "enable_integrity_filters": True,
                     "id": str(user_id),
-                    "render_surface": "PROFILE",
                     "__relay_internal__pv__PolarisCannesGuardianExperienceEnabledrelayprovider": True,
                     "__relay_internal__pv__PolarisCASB976ProfileEnabledrelayprovider": False,
-                    "__relay_internal__pv__PolarisRepostsConsumptionEnabledrelayprovider": False,
                     "__relay_internal__pv__PolarisWebSchoolsEnabledrelayprovider": False,
-                    "enable_integrity_filters": True,
+                    "__relay_internal__pv__PolarisRepostsConsumptionEnabledrelayprovider": False,
                 }
-                data = self._context.doc_id_graphql_query('27937681195819736', variables)
+                data = self._context.doc_id_graphql_query('26672929172408668', variables)
                 if data is None:
                     raise QueryReturnedNotFoundException('GraphQL query returned None')
                 user_data = data.get('data', {}).get('user')
