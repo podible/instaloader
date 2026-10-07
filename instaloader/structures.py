@@ -15,6 +15,21 @@ from .instaloadercontext import InstaloaderContext
 from .nodeiterator import FrozenNodeIterator, NodeIterator
 from .sectioniterator import SectionIterator
 
+# PolarisProfilePostsQuery as sent by the web app; Instagram flags stale doc_id/variable combinations as spam.
+_PROFILE_POSTS_DOC_ID = "28542612348729311"
+_PROFILE_POSTS_DATA = {
+    "count": 12,
+    "include_reel_media_seen_timestamp": True,
+    "include_relationship_info": True,
+    "latest_besties_reel_media": True,
+    "latest_reel_media": True,
+}
+_PROFILE_POSTS_RELAY_PROVIDERS = {
+    "__relay_internal__pv__PolarisMultiCaptionCarouselEnabledrelayprovider": True,
+    "__relay_internal__pv__PolarisShortDramaEnabledrelayprovider": True,
+    "__relay_internal__pv__PolarisReelsRecoDebugOverlayEnabledrelayprovider": False,
+}
+
 
 class PostSidecarNode(NamedTuple):
     """Item of a Sidecar Post."""
@@ -999,15 +1014,13 @@ class Profile:
         # profile._obtain_metadata()  # to raise ProfileNotExistsException now in case username is invalid
         # return profile
         variables = {
-            "data": {
-                "count": 3
-            },
+            "data": _PROFILE_POSTS_DATA,
             "username": username,
-            "__relay_internal__pv__PolarisFeedShareMenurelayprovider": False,
+            **_PROFILE_POSTS_RELAY_PROVIDERS,
         }
-        
+
         try:
-            data = context.doc_id_graphql_query('7898261790222653', variables)
+            data = context.doc_id_graphql_query(_PROFILE_POSTS_DOC_ID, variables)
             for node_user in data["data"]["xdt_api__v1__feed__user_timeline_graphql_connection"]["edges"]:
                 user_info = node_user["node"]["user"]
                 if user_info['username'] == username:
@@ -1378,18 +1391,23 @@ class Profile:
                 if logged_in
                 else (lambda n: Post(self._context, n, self))
             ),
-            query_variables={
-                "data": {
-                    "count": 12,
-                    "include_relationship_info": True,
-                    "latest_besties_reel_media": True,
-                    "latest_reel_media": True,
-                },
-                **({"username": self.username} if logged_in else {"id": self.userid}),
-            },
+            query_variables=(
+                {"data": _PROFILE_POSTS_DATA, "username": self.username, **_PROFILE_POSTS_RELAY_PROVIDERS}
+                if logged_in
+                else {
+                    "data": {
+                        "count": 12,
+                        "include_relationship_info": True,
+                        "latest_besties_reel_media": True,
+                        "latest_reel_media": True,
+                    },
+                    "id": self.userid,
+                    "__relay_internal__pv__PolarisFeedShareMenurelayprovider": False,
+                }
+            ),
             query_referer="https://www.instagram.com/{0}/".format(self.username),
             is_first=Profile._make_is_newest_checker(),
-            doc_id="7898261790222653" if logged_in else "7950326061742207",
+            doc_id=_PROFILE_POSTS_DOC_ID if logged_in else "7950326061742207",
             query_hash=None,
             first_data=(None if logged_in else self._metadata("edge_owner_to_timeline_media")),
         )

@@ -109,7 +109,7 @@ class NodeIterator(Iterator[T]):
             return self._query_query_hash(self._query_hash, after)
 
     def _query_doc_id(self, doc_id: str, after: Optional[str] = None) -> Dict:
-        pagination_variables: Dict[str, Any] = {'__relay_internal__pv__PolarisFeedShareMenurelayprovider': False}
+        pagination_variables: Dict[str, Any] = {}
         if after is not None:
             pagination_variables['after'] = after
             pagination_variables['before'] = None
