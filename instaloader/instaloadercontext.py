@@ -2,6 +2,7 @@ import json
 import os
 import pickle
 import random
+import re
 import shutil
 import sys
 import textwrap
@@ -17,6 +18,14 @@ import requests
 import requests.utils
 
 from .exceptions import *
+
+_FB_DTSG_RE = re.compile(r'"DTSGInitialData",\[\],\{"token":"([^"]+)"')
+_MAX_POST_REDIRECTS = 5
+
+
+def _without_query(url: str) -> str:
+    """Redirect targets carry the query's params (fb_dtsg, variables) in ?next=...; keep logs to the path."""
+    return urllib.parse.urlsplit(url)._replace(query='', fragment='').geturl()
 
 
 def copy_session(session: requests.Session, request_timeout: Optional[float] = None) -> requests.Session:
@@ -97,6 +106,8 @@ class InstaloaderContext:
         self.max_connection_attempts = max_connection_attempts
         self._graphql_page_length = 50
         self.two_factor_auth_pending = None
+        # (sessionid, fb_dtsg) so a new login or loaded session fetches its own token.
+        self._fb_dtsg: Optional[tuple] = None
         self.iphone_support = iphone_support
         self.iphone_headers = default_iphone_headers()
 
@@ -442,20 +453,33 @@ class InstaloaderContext:
                 raise AbortDownloadException("Query to https://{}/{} responded with \"{} {}\"{}{}".format(
                     host, path, resp.status_code, resp.reason, redirect, body
                 ))
+            post_redirects: List[str] = []
             while resp.is_redirect:
                 redirect_url = resp.headers['location']
-                self.log('\nHTTP redirect from https://{0}/{1} to {2}'.format(host, path, redirect_url))
+                self.log('\nHTTP redirect from https://{0}/{1} to {2}'.format(host, path, _without_query(redirect_url)))
                 if (redirect_url.startswith('https://www.instagram.com/accounts/login') or
                     redirect_url.startswith('https://i.instagram.com/accounts/login')):
                     if not self.is_logged_in:
                         raise LoginRequiredException("Redirected to login page. Use --login or --load-cookies.")
                     raise AbortDownloadException("Redirected to login page. You've been logged out, please wait " +
                                                  "some time, recreate the session and try again")
-                if redirect_url.startswith('https://{}/'.format(host)):
+                if use_post:
+                    # A POST query is never redirected to its data: Instagram sends refused sessions into an HTML
+                    # flow (cookie consent, accounts/suspended, the home page). Follow it, without our params, only
+                    # to name where it ends; resending the query there loops or retries on HTML.
+                    post_redirects.append(_without_query(redirect_url))
+                    if len(post_redirects) == _MAX_POST_REDIRECTS or not redirect_url.startswith(
+                            'https://{}/'.format(host)):
+                        break
+                    resp = sess.get(redirect_url, allow_redirects=False)
+                elif redirect_url.startswith('https://{}/'.format(host)):
                     resp = sess.get(redirect_url if redirect_url.endswith('/') else redirect_url + '/',
                                     params=params, allow_redirects=False)
                 else:
                     break
+            if post_redirects:
+                raise AbortDownloadException("Query to https://{}/{} redirected to {}".format(
+                    host, path, " -> ".join(post_redirects)))
             if response_headers is not None:
                 response_headers.clear()
                 response_headers.update(resp.headers)
@@ -476,8 +500,13 @@ class InstaloaderContext:
                 raise TooManyRequestsException(self._response_error(resp))
             if resp.status_code != 200:
                 raise ConnectionException(self._response_error(resp))
-            else:
-                resp_json = resp.json()
+            if use_post and resp.headers.get('Content-Type', '').startswith('text/html'):
+                # Sessions Instagram refuses (e.g. deleted accounts) get a web page such as PolarisErrorRoute.
+                # It is the same page on every attempt, so do not retry.
+                route = re.search(r'"canonicalRouteName":"([^"]+)"', resp.text)
+                raise AbortDownloadException("Query to https://{}/{} returned an HTML page{}".format(
+                    host, path, " ({})".format(route.group(1)) if route else ""))
+            resp_json = resp.json()
             if 'status' in resp_json and resp_json['status'] != "ok":
                 raise ConnectionException(self._response_error(resp))
             return resp_json
@@ -500,7 +529,7 @@ class InstaloaderContext:
                     if is_other_query:
                         self._rate_controller.handle_429('other')
                 return self.get_json(path=path, params=params, host=host, session=sess, _attempt=_attempt + 1,
-                                     response_headers=response_headers)
+                                     response_headers=response_headers, use_post=use_post)
             except KeyboardInterrupt:
                 self.error("[skipped by user]", repeat_at_end=False)
                 raise ConnectionException(error_string) from err
@@ -538,8 +567,27 @@ class InstaloaderContext:
             self.error("GraphQL response did not contain a \"status\" field.")
         return resp_json
 
+    def _get_fb_dtsg(self) -> str:
+        """Per-session token the web app reads from the page HTML. Logged-in doc_id queries are rejected without it."""
+        sessionid = next((c.value for c in self._session.cookies if c.name == 'sessionid' and c.value), None)
+        if self._fb_dtsg is None or self._fb_dtsg[0] != sessionid:
+            # After login() the jar also holds the empty sessionid it was seeded with; sent as is, Instagram
+            # serves the logged-out page. copy_session keeps one value per cookie name, like the query itself.
+            with copy_session(self._session, self.request_timeout) as tmpsession:
+                resp = tmpsession.get('https://www.instagram.com/', allow_redirects=False)
+            if resp.is_redirect:
+                # Dead sessions are bounced (e.g. instagram.com/ to itself, consent, accounts/suspended).
+                raise AbortDownloadException("https://www.instagram.com/ redirected to {}".format(
+                    _without_query(resp.headers['location'])))
+            match = _FB_DTSG_RE.search(resp.text)
+            if match is None:
+                raise ConnectionException("fb_dtsg not found on {} (HTTP {}, {} bytes)".format(
+                    resp.url, resp.status_code, len(resp.text)))
+            self._fb_dtsg = (sessionid, match.group(1))
+        return self._fb_dtsg[1]
+
     def doc_id_graphql_query(self, doc_id: str, variables: Dict[str, Any],
-                             referer: Optional[str] = None) -> Dict[str, Any]:
+                             referer: Optional[str] = None, friendly_name: Optional[str] = None) -> Dict[str, Any]:
         """
         Do a doc_id-based GraphQL Query using method POST.
 
@@ -548,6 +596,8 @@ class InstaloaderContext:
         :param doc_id: doc_id for the query.
         :param variables: Variables for the Query.
         :param referer: HTTP Referer, or None.
+        :param friendly_name: The query's name in the web app, sent as X-FB-Friendly-Name. Instagram redirects
+           logged-in queries whose name is missing or does not match the doc_id.
         :return: The server's response dictionary.
         """
         csrf = next((c.value for c in self._session.cookies
@@ -557,6 +607,12 @@ class InstaloaderContext:
             csrf = next((c.value for c in self._session.cookies
                          if c.name == 'csrftoken' and c.value), '')
 
+        params = {'variables': json.dumps(variables, separators=(',', ':')),
+                  'doc_id': doc_id,
+                  'server_timestamps': 'true'}
+        if self.is_logged_in:
+            params['fb_dtsg'] = self._get_fb_dtsg()
+
         with copy_session(self._session, self.request_timeout) as tmpsession:
             tmpsession.headers.update(self._default_http_header(empty_session_only=True))
             del tmpsession.headers['Connection']
@@ -565,18 +621,15 @@ class InstaloaderContext:
             tmpsession.headers['scheme'] = 'https'
             tmpsession.headers['accept'] = '*/*'
             tmpsession.headers['x-csrftoken'] = csrf
+            tmpsession.headers['sec-fetch-site'] = 'same-origin'
+            if friendly_name is not None:
+                tmpsession.headers['x-fb-friendly-name'] = friendly_name
             if referer is not None:
                 tmpsession.headers['referer'] = urllib.parse.quote(referer)
 
-            variables_json = json.dumps(variables, separators=(',', ':'))
-
-            resp_json = self.get_json('graphql/query',
-                                      params={'variables': variables_json,
-                                              'doc_id': doc_id,
-                                              'server_timestamps': 'true'},
-                                      session=tmpsession,
-                                      use_post=True)
-        if 'status' not in resp_json:
+            resp_json = self.get_json('graphql/query', params=params, session=tmpsession, use_post=True)
+        # Queries sent with fb_dtsg get the web app's response shape, which has "data" but no "status".
+        if 'status' not in resp_json and 'data' not in resp_json:
             self.error("GraphQL response did not contain a \"status\" field.")
         return resp_json
 

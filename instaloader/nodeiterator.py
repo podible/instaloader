@@ -83,10 +83,12 @@ class NodeIterator(Iterator[T]):
                  query_referer: Optional[str] = None,
                  first_data: Optional[Dict[str, Any]] = None,
                  is_first: Optional[Callable[[T, Optional[T]], bool]] = None,
-                 doc_id: Optional[str] = None):
+                 doc_id: Optional[str] = None,
+                 doc_id_friendly_name: Optional[str] = None):
         self._context = context
         self._query_hash = query_hash
         self._doc_id = doc_id
+        self._doc_id_friendly_name = doc_id_friendly_name
         self._edge_extractor = edge_extractor
         self._node_wrapper = node_wrapper
         self._query_variables = query_variables if query_variables is not None else {}
@@ -117,7 +119,8 @@ class NodeIterator(Iterator[T]):
             pagination_variables['last'] = None
         data = self._edge_extractor(
             self._context.doc_id_graphql_query(
-                doc_id, {**self._query_variables, **pagination_variables}, self._query_referer
+                doc_id, {**self._query_variables, **pagination_variables}, self._query_referer,
+                friendly_name=self._doc_id_friendly_name,
             )
         )
         self._best_before = datetime.now() + NodeIterator._shelf_life

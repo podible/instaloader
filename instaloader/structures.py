@@ -16,7 +16,8 @@ from .nodeiterator import FrozenNodeIterator, NodeIterator
 from .sectioniterator import SectionIterator
 
 # PolarisProfilePostsQuery as sent by the web app; Instagram flags stale doc_id/variable combinations as spam.
-_PROFILE_POSTS_DOC_ID = "28542612348729311"
+_PROFILE_POSTS_DOC_ID = "29156678094015645"
+_PROFILE_POSTS_FRIENDLY_NAME = "PolarisProfilePostsQuery"
 _PROFILE_POSTS_DATA = {
     "count": 12,
     "include_reel_media_seen_timestamp": True,
@@ -27,6 +28,8 @@ _PROFILE_POSTS_DATA = {
 _PROFILE_POSTS_RELAY_PROVIDERS = {
     "__relay_internal__pv__PolarisMultiCaptionCarouselEnabledrelayprovider": True,
     "__relay_internal__pv__PolarisShortDramaEnabledrelayprovider": True,
+    "__relay_internal__pv__PolarisSEOIsCrawlerrelayprovider": False,
+    "__relay_internal__pv__PolarisThreadsStyleCommentsEnabledrelayprovider": False,
     "__relay_internal__pv__PolarisReelsRecoDebugOverlayEnabledrelayprovider": False,
 }
 
@@ -1020,7 +1023,9 @@ class Profile:
         }
 
         try:
-            data = context.doc_id_graphql_query(_PROFILE_POSTS_DOC_ID, variables)
+            data = context.doc_id_graphql_query(
+                _PROFILE_POSTS_DOC_ID, variables, friendly_name=_PROFILE_POSTS_FRIENDLY_NAME
+            )
             for node_user in data["data"]["xdt_api__v1__feed__user_timeline_graphql_connection"]["edges"]:
                 user_info = node_user["node"]["user"]
                 if user_info['username'] == username:
@@ -1408,6 +1413,7 @@ class Profile:
             query_referer="https://www.instagram.com/{0}/".format(self.username),
             is_first=Profile._make_is_newest_checker(),
             doc_id=_PROFILE_POSTS_DOC_ID if logged_in else "7950326061742207",
+            doc_id_friendly_name=_PROFILE_POSTS_FRIENDLY_NAME if logged_in else None,
             query_hash=None,
             first_data=(None if logged_in else self._metadata("edge_owner_to_timeline_media")),
         )
