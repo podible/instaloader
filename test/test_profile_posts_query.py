@@ -8,6 +8,8 @@ sys.path.insert(0, os.getcwd())
 from instaloader.structures import Profile
 
 CONNECTION = "xdt_api__v1__feed__user_timeline_graphql_connection"
+DOC_ID = "29156678094015645"
+FRIENDLY_NAME = "PolarisProfilePostsQuery"
 EXPECTED_VARIABLES = {
     "data": {
         "count": 12,
@@ -19,6 +21,8 @@ EXPECTED_VARIABLES = {
     "username": "natgeo",
     "__relay_internal__pv__PolarisMultiCaptionCarouselEnabledrelayprovider": True,
     "__relay_internal__pv__PolarisShortDramaEnabledrelayprovider": True,
+    "__relay_internal__pv__PolarisSEOIsCrawlerrelayprovider": False,
+    "__relay_internal__pv__PolarisThreadsStyleCommentsEnabledrelayprovider": False,
     "__relay_internal__pv__PolarisReelsRecoDebugOverlayEnabledrelayprovider": False,
 }
 
@@ -39,7 +43,7 @@ class TestProfilePostsQuery(unittest.TestCase):
         profile = Profile.from_username(self.context, "natgeo")
 
         self.assertEqual(profile.username, "natgeo")
-        self.query.assert_called_once_with("28542612348729311", EXPECTED_VARIABLES)
+        self.query.assert_called_once_with(DOC_ID, EXPECTED_VARIABLES, friendly_name=FRIENDLY_NAME)
 
     def test_logged_in_get_posts_sends_current_query_on_every_page(self):
         profile = Profile(self.context, {"username": "natgeo", "id": "1"})
@@ -49,14 +53,12 @@ class TestProfilePostsQuery(unittest.TestCase):
         list(profile.get_posts())
 
         first, second = self.query.call_args_list
-        self.assertEqual(first.args[:2], ("28542612348729311", EXPECTED_VARIABLES))
+        self.assertEqual(first.args[:2], (DOC_ID, EXPECTED_VARIABLES))
         self.assertEqual(
             second.args[:2],
-            (
-                "28542612348729311",
-                {**EXPECTED_VARIABLES, "after": "cursor-1", "before": None, "first": 12, "last": None},
-            ),
+            (DOC_ID, {**EXPECTED_VARIABLES, "after": "cursor-1", "before": None, "first": 12, "last": None}),
         )
+        self.assertEqual([call.kwargs["friendly_name"] for call in (first, second)], [FRIENDLY_NAME] * 2)
 
     def test_anonymous_get_posts_keeps_legacy_query(self):
         self.context.is_logged_in = False
@@ -72,6 +74,7 @@ class TestProfilePostsQuery(unittest.TestCase):
 
         doc_id, variables, _ = self.query.call_args.args
         self.assertEqual(doc_id, "7950326061742207")
+        self.assertIsNone(self.query.call_args.kwargs["friendly_name"])
         self.assertFalse(variables["__relay_internal__pv__PolarisFeedShareMenurelayprovider"])
         self.assertEqual(variables["id"], 1)
 
