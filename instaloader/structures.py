@@ -256,7 +256,7 @@ class Post:
             "comments": media.get("comment_count"),
             "iphone_struct": media,
         }
-        with suppress(KeyError):
+        with suppress(KeyError, IndexError):
             fake_node["display_url"] = media['image_versions2']['candidates'][0]['url']
         with suppress(KeyError, TypeError):
             fake_node["video_url"] = media['video_versions'][-1]['url']

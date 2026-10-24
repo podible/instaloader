@@ -210,5 +210,40 @@ class TestInstaloaderLoggedIn(TestInstaloaderAnonymously):
                 break
 
 
+class TestFromIphoneStruct(unittest.TestCase):
+    """Offline tests for Post.from_iphone_struct edge cases."""
+
+    def _minimal_media(self, **overrides):
+        """Return a minimal valid iphone_struct media dict."""
+        base = {
+            "code": "ABC123",
+            "pk": "123456789",
+            "media_type": 1,
+            "taken_at": 1723276719,
+            "caption": None,
+            "has_liked": False,
+            "like_count": 0,
+        }
+        base.update(overrides)
+        return base
+
+    def test_empty_candidates_does_not_raise(self):
+        """from_iphone_struct must not crash when image_versions2.candidates is empty."""
+        ctx = instaloader.InstaloaderContext()
+        media = self._minimal_media(image_versions2={"candidates": []})
+        post = instaloader.Post.from_iphone_struct(ctx, media)
+        # display_url should simply be absent — not raise IndexError
+        self.assertNotIn("display_url", post._node)
+
+    def test_populated_candidates_sets_display_url(self):
+        """from_iphone_struct still sets display_url when candidates is non-empty."""
+        ctx = instaloader.InstaloaderContext()
+        media = self._minimal_media(
+            image_versions2={"candidates": [{"url": "https://example.com/img.jpg"}]}
+        )
+        post = instaloader.Post.from_iphone_struct(ctx, media)
+        self.assertEqual(post._node.get("display_url"), "https://example.com/img.jpg")
+
+
 if __name__ == '__main__':
     unittest.main()
