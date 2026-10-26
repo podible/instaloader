@@ -256,11 +256,16 @@ class Post:
             "comments": media.get("comment_count"),
             "iphone_struct": media,
         }
-        with suppress(KeyError):
-            fake_node["display_url"] = media['image_versions2']['candidates'][0]['url']
-        with suppress(KeyError, TypeError):
-            fake_node["video_url"] = media['video_versions'][-1]['url']
+        # Timeline nodes often include these lists empty. An empty list is a missing URL, not a failed post.
+        candidates = (media.get("image_versions2") or {}).get("candidates") or []
+        if candidates:
+            fake_node["display_url"] = candidates[0]["url"]
+        video_versions = media.get("video_versions") or []
+        if video_versions:
+            fake_node["video_url"] = video_versions[-1]["url"]
+        if media.get("video_duration") is not None:
             fake_node["video_duration"] = media["video_duration"]
+        if media.get("view_count") is not None:
             fake_node["video_view_count"] = media["view_count"]
         with suppress(KeyError, TypeError):
             fake_node["edge_sidecar_to_children"] = {"edges": [{"node":
@@ -270,13 +275,15 @@ class Post:
 
     @staticmethod
     def _convert_iphone_carousel(iphone_node: Dict[str, Any], media_types: Dict[int, str]) -> Dict[str, Any]:
+        candidates = (iphone_node.get("image_versions2") or {}).get("candidates") or []
         fake_node = {
             "id": str(iphone_node["pk"]) if "pk" in iphone_node else None,
-            "display_url": iphone_node["image_versions2"]["candidates"][0]["url"],
+            "display_url": candidates[0]["url"] if candidates else "",
             "is_video": media_types[iphone_node["media_type"]] == "GraphVideo",
         }
-        if "video_versions" in iphone_node and iphone_node["video_versions"] is not None:
-            fake_node["video_url"] = iphone_node["video_versions"][0]["url"]
+        video_versions = iphone_node.get("video_versions") or []
+        if video_versions:
+            fake_node["video_url"] = video_versions[0]["url"]
         return fake_node
 
     @staticmethod
