@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, os.getcwd())
 
+from instaloader.exceptions import ProfileNotExistsException
 from instaloader.structures import Profile
 
 CONNECTION = "xdt_api__v1__feed__user_timeline_graphql_connection"
@@ -44,6 +45,38 @@ class TestProfilePostsQuery(unittest.TestCase):
 
         self.assertEqual(profile.username, "natgeo")
         self.query.assert_called_once_with(DOC_ID, EXPECTED_VARIABLES, friendly_name=FRIENDLY_NAME)
+
+    def test_from_username_prefers_owned_post_over_coauthor(self):
+        self.query.return_value = timeline([
+            {"node": {"user": {"username": "partner", "id": "2"},
+                      "coauthor_producers": [{"username": "natgeo", "id": "1", "full_name": "coauthor"}]}},
+            {"node": {"user": {"username": "natgeo", "id": "1", "full_name": "owner"}}},
+        ])
+
+        profile = Profile.from_username(self.context, "natgeo")
+
+        self.assertEqual(profile._node["full_name"], "owner")
+
+    def test_from_username_matches_coauthor_when_no_post_is_owned(self):
+        self.query.return_value = timeline([
+            {"node": {"user": {"username": "partner", "id": "2"},
+                      "coauthor_producers": [{"username": "other", "id": "3"},
+                                             {"username": "natgeo", "id": "1"}]}},
+        ])
+
+        profile = Profile.from_username(self.context, "natgeo")
+
+        self.assertEqual((profile.username, profile.userid), ("natgeo", 1))
+
+    def test_from_username_ignores_pending_coauthor_invites(self):
+        self.query.return_value = timeline([
+            {"node": {"user": {"username": "partner", "id": "2"},
+                      "coauthor_producers": [],
+                      "invited_coauthor_producers": [{"username": "natgeo", "id": "1"}]}},
+        ])
+
+        with self.assertRaises(ProfileNotExistsException):
+            Profile.from_username(self.context, "natgeo")
 
     def test_logged_in_get_posts_sends_current_query_on_every_page(self):
         profile = Profile(self.context, {"username": "natgeo", "id": "1"})

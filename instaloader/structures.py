@@ -1033,10 +1033,16 @@ class Profile:
             data = context.doc_id_graphql_query(
                 _PROFILE_POSTS_DOC_ID, variables, friendly_name=_PROFILE_POSTS_FRIENDLY_NAME
             )
-            for node_user in data["data"]["xdt_api__v1__feed__user_timeline_graphql_connection"]["edges"]:
-                user_info = node_user["node"]["user"]
-                if user_info['username'] == username:
-                    return cls(context, user_info)
+            edges = data["data"]["xdt_api__v1__feed__user_timeline_graphql_connection"]["edges"]
+            nodes = [edge["node"] for edge in edges]
+            for node in nodes:
+                if node["user"]['username'] == username:
+                    return cls(context, node["user"])
+            # Accounts that only post as a collaborator own none of their timeline posts.
+            for node in nodes:
+                for coauthor in node.get("coauthor_producers") or []:
+                    if coauthor['username'] == username:
+                        return cls(context, coauthor)
             raise ProfileNotExistsException()
         except Exception as e:
             raise ProfileNotExistsException("No profile found, the user may have blocked you (ID: " +
