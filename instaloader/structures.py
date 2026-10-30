@@ -4,6 +4,7 @@ import re
 from base64 import b64decode, b64encode
 from contextlib import suppress
 from datetime import datetime
+from enum import Enum
 from itertools import islice
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Iterator, List, NamedTuple, Optional, Tuple, Union
@@ -11,13 +12,16 @@ from unicodedata import normalize
 
 from . import __version__
 from .exceptions import *
-from .instaloadercontext import InstaloaderContext
+from .instaloadercontext import InstaloaderContext, embedded_page_data
 from .nodeiterator import FrozenNodeIterator, NodeIterator
 from .sectioniterator import SectionIterator
 
 # PolarisProfilePostsQuery as sent by the web app; Instagram flags stale doc_id/variable combinations as spam.
 _PROFILE_POSTS_DOC_ID = "29156678094015645"
 _PROFILE_POSTS_FRIENDLY_NAME = "PolarisProfilePostsQuery"
+# The "field_exception" error the profile posts query answers with for a deleted, renamed or never existing username,
+# and for some sessions when the account is private.
+_PROFILE_MISSING_ERROR_CODE = 1357005
 _PROFILE_POSTS_DATA = {
     "count": 12,
     "include_reel_media_seen_timestamp": True,
@@ -979,6 +983,13 @@ class Post:
         return 'pinned_for_users' in self._node and bool(self._node['pinned_for_users'])
 
 
+class ProfilePageState(Enum):
+    """What the logged-out page of a username shows, see :meth:`Profile.check_page`."""
+    NOT_FOUND = "not_found"
+    PRIVATE = "private"
+    PUBLIC = "public"
+
+
 class Profile:
     """
     An Instagram Profile.
@@ -1041,20 +1052,55 @@ class Profile:
             data = context.doc_id_graphql_query(
                 _PROFILE_POSTS_DOC_ID, variables, friendly_name=_PROFILE_POSTS_FRIENDLY_NAME
             )
+            if any(error.get("code") == _PROFILE_MISSING_ERROR_CODE for error in data.get("errors") or []):
+                raise ProfileNotFoundException(
+                    "Instagram answered the {} timeline query with field_exception {} and no data: "
+                    "the account may not exist, or may be private.".format(username, _PROFILE_MISSING_ERROR_CODE))
             edges = data["data"]["xdt_api__v1__feed__user_timeline_graphql_connection"]["edges"]
             nodes = [edge["node"] for edge in edges]
+            # Instagram usernames are lowercase, but a requested name may not be.
+            wanted = username.lower()
             for node in nodes:
-                if node["user"]['username'] == username:
+                if node["user"]['username'].lower() == wanted:
                     return cls(context, node["user"])
             # Accounts that only post as a collaborator own none of their timeline posts.
             for node in nodes:
                 for coauthor in node.get("coauthor_producers") or []:
-                    if coauthor['username'] == username:
+                    if coauthor['username'].lower() == wanted:
                         return cls(context, coauthor)
-            raise ProfileNotExistsException()
+            raise ProfileNoPostsException(
+                "Instagram returned {} timeline posts for {}, none owned or co-authored by it: "
+                "the account may be private, or have no posts.".format(len(nodes), username))
+        except ProfileUnavailableException:
+            raise
         except Exception as e:
             raise ProfileNotExistsException("No profile found, the user may have blocked you (ID: " +
                                             str(username) + ").")
+
+    @staticmethod
+    def check_page(context: InstaloaderContext, username: str) -> ProfilePageState:
+        """Check what the logged-out profile page of a username shows.
+
+        It tells a missing account from a private or a public one, which the answers behind
+        :class:`ProfileUnavailableException` cannot. :meth:`from_username` does not call it.
+
+        :raises BadResponseException: When the page shows neither an account nor Instagram's error page.
+        :raises ConnectionException: When the page request failed.
+        """
+        try:
+            html = context.get_page("{0}/".format(username.lower()))
+        except QueryReturnedNotFoundException:
+            return ProfilePageState.NOT_FOUND
+        user: Dict[str, Any] = {}
+        for data in embedded_page_data(html):
+            # Some visitors, such as ones behind proxies, get the page with the profile as xig_user_by_igid_v2.
+            for key in ("xig_user_by_username", "xig_user_by_igid_v2"):
+                user.update(data.get(key) or {})
+        if user.get("pk"):
+            return ProfilePageState.PRIVATE if user.get("is_private") else ProfilePageState.PUBLIC
+        if "PolarisErrorRoute" in html:
+            return ProfilePageState.NOT_FOUND
+        raise BadResponseException("The page of {} shows neither an account nor the error page.".format(username))
 
     @classmethod
     def from_id(cls, context: InstaloaderContext, profile_id: int):

@@ -17,6 +17,27 @@ class ProfileNotExistsException(InstaloaderException):
     pass
 
 
+class ProfileUnavailableException(ProfileNotExistsException):
+    """Instagram answered the profile lookup without the profile.
+
+    Unlike other lookup failures, retrying with a different session rarely changes the answer.
+
+    :note: Raised as one of its subclasses.
+    """
+    pass
+
+
+class ProfileNotFoundException(ProfileUnavailableException):
+    """Instagram answered with a field_exception and no data: the account does not exist, or is private."""
+    pass
+
+
+class ProfileNoPostsException(ProfileUnavailableException):
+    """None of the posts on the first page of the timeline is owned or co-authored by the account, including an
+    empty timeline: the account is private, or has no posts."""
+    pass
+
+
 class ProfileHasNoPicsException(InstaloaderException):
     """
     .. deprecated:: 4.2.2
