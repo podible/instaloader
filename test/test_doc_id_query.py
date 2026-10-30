@@ -9,13 +9,17 @@ sys.path.insert(0, os.getcwd())
 
 from instaloader.exceptions import AbortDownloadException, ConnectionException
 from instaloader.instaloadercontext import InstaloaderContext
+from instaloader.structures import Post
 
 PAGE = '<script>{"define":[["DTSGInitialData",[],{"token":"NAf-token:1:2"},258]]}</script>'
+LOGGED_OUT_PAGE = '<script>{"define":[["LSD",[],{"token":"lsd-token"},323]]}</script>'
+MEDIA = {"pk": "1", "id": "1_2", "code": "abc", "media_type": 1, "taken_at": 1700000000,
+         "user": {"pk": "2", "username": "owner"}, "like_count": 5, "comment_count": 2}
 
 
 class TestDocIdQuery(unittest.TestCase):
     def setUp(self):
-        self.context = InstaloaderContext(quiet=True)
+        self.context = InstaloaderContext(sleep=False, quiet=True)
         self.context.username = "acct"
         # The anonymous session already holds login()'s empty sessionid seed (no domain); this is the real one.
         self.context._session.cookies.set("csrftoken", "csrf", domain=".instagram.com")
@@ -93,10 +97,55 @@ class TestDocIdQuery(unittest.TestCase):
 
         self.context.doc_id_graphql_query("123", {})
 
-        _path, params, headers = self.sent[0]
+        path, params, headers = self.sent[0]
+        self.assertEqual(path, "graphql/query")
         self.assertNotIn("fb_dtsg", params)
+        self.assertNotIn("lsd", params)
         self.assertNotIn("x-fb-friendly-name", headers)
         self.page.assert_not_called()
+
+    def test_web_api_query_sends_the_start_page_lsd_to_api_graphql(self):
+        self.context.username = None
+        self.page_response = MagicMock(text=LOGGED_OUT_PAGE, url="https://www.instagram.com/", status_code=200)
+
+        self.context.doc_id_graphql_query("123", {}, web_api=True)
+        self.context.doc_id_graphql_query("456", {}, web_api=True)
+
+        path, params, headers = self.sent[1]
+        self.assertEqual(path, "api/graphql")
+        self.assertEqual(params["lsd"], "lsd-token")
+        self.assertEqual(params["doc_id"], "456")
+        self.assertNotIn("fb_dtsg", params)
+        self.assertEqual(headers["x-fb-lsd"], "lsd-token")
+        self.assertEqual(headers["sec-fetch-mode"], "cors")
+        self.page.assert_called_once()
+        self.assertEqual(self.page.call_args.kwargs["headers"]["Sec-Fetch-Mode"], "navigate")
+
+    def test_missing_lsd_raises(self):
+        self.context.username = None
+        self.page_response = MagicMock(text="<html>error</html>", url="https://www.instagram.com/", status_code=200)
+
+        with self.assertRaisesRegex(ConnectionException, "lsd not found"):
+            self.context.doc_id_graphql_query("123", {}, web_api=True)
+        self.assertEqual(self.sent, [])
+
+
+class TestPostMetadataEndpoint(unittest.TestCase):
+    def _queried_with(self, username):
+        context = InstaloaderContext(sleep=False, quiet=True)
+        context.username = username
+        context.doc_id_graphql_query = MagicMock(return_value={
+            "data": {"xdt_api__v1__media__shortcode__web_info": {"items": [MEDIA]}}})
+
+        Post(context, {"shortcode": "abc"})._obtain_metadata()
+
+        return context.doc_id_graphql_query.call_args.kwargs
+
+    def test_logged_out_post_query_uses_the_web_api(self):
+        self.assertEqual(self._queried_with(None), {"web_api": True})
+
+    def test_logged_in_post_query_keeps_graphql_query(self):
+        self.assertEqual(self._queried_with("acct"), {"web_api": False})
 
 
 if __name__ == "__main__":
