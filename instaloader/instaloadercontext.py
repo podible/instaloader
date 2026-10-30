@@ -20,6 +20,10 @@ import requests.utils
 from .exceptions import *
 
 _FB_DTSG_RE = re.compile(r'"DTSGInitialData",\[\],\{"token":"([^"]+)"')
+_LSD_RE = re.compile(r'"LSD",\[\],\{[^{}]*"token":"([^"]+)"')
+# Without these, Instagram serves its error page, which has no lsd token.
+_PAGE_NAVIGATION_HEADERS = {'Accept': 'text/html', 'Sec-Fetch-Dest': 'document', 'Sec-Fetch-Mode': 'navigate',
+                            'Sec-Fetch-Site': 'none'}
 _MAX_POST_REDIRECTS = 5
 
 
@@ -108,6 +112,7 @@ class InstaloaderContext:
         self.two_factor_auth_pending = None
         # (sessionid, fb_dtsg) so a new login or loaded session fetches its own token.
         self._fb_dtsg: Optional[tuple] = None
+        self._lsd: Optional[str] = None
         self.iphone_support = iphone_support
         self.iphone_headers = default_iphone_headers()
 
@@ -427,7 +432,7 @@ class InstaloaderContext:
            Added `use_post` parameter.
         """
         is_graphql_query = 'query_hash' in params and 'graphql/query' in path
-        is_doc_id_query = 'doc_id' in params and 'graphql/query' in path
+        is_doc_id_query = 'doc_id' in params and ('graphql/query' in path or path == 'api/graphql')
         is_iphone_query = host == 'i.instagram.com'
         is_other_query = not is_graphql_query and not is_doc_id_query and host == "www.instagram.com"
         sess = session if session else self._session
@@ -586,8 +591,23 @@ class InstaloaderContext:
             self._fb_dtsg = (sessionid, match.group(1))
         return self._fb_dtsg[1]
 
+    def _get_lsd(self) -> str:
+        """Token the logged-out web app reads from the start page and sends with its api/graphql queries."""
+        if self._lsd is None:
+            self.do_sleep()
+            self._rate_controller.wait_before_query('other')
+            resp = self._session.get('https://www.instagram.com/', headers=_PAGE_NAVIGATION_HEADERS,
+                                     allow_redirects=False, timeout=self.request_timeout)
+            match = _LSD_RE.search(resp.text)
+            if match is None:
+                raise ConnectionException("lsd not found on {} (HTTP {}, {} bytes)".format(
+                    resp.url, resp.status_code, len(resp.text)))
+            self._lsd = match.group(1)
+        return self._lsd
+
     def doc_id_graphql_query(self, doc_id: str, variables: Dict[str, Any],
-                             referer: Optional[str] = None, friendly_name: Optional[str] = None) -> Dict[str, Any]:
+                             referer: Optional[str] = None, friendly_name: Optional[str] = None,
+                             web_api: bool = False) -> Dict[str, Any]:
         """
         Do a doc_id-based GraphQL Query using method POST.
 
@@ -598,8 +618,13 @@ class InstaloaderContext:
         :param referer: HTTP Referer, or None.
         :param friendly_name: The query's name in the web app, sent as X-FB-Friendly-Name. Instagram redirects
            logged-in queries whose name is missing or does not match the doc_id.
+        :param web_api: Send a logged-out query to the web app's api/graphql endpoint with the start page's lsd
+           token, as the logged-out web app does. Instagram refuses logged-out post queries to graphql/query with
+           401 "require_login".
         :return: The server's response dictionary.
         """
+        # The start page request also sets the csrftoken cookie.
+        lsd = self._get_lsd() if web_api else None
         csrf = next((c.value for c in self._session.cookies
                      if c.name == 'csrftoken' and c.value), None)
         if not csrf:
@@ -612,6 +637,8 @@ class InstaloaderContext:
                   'server_timestamps': 'true'}
         if self.is_logged_in:
             params['fb_dtsg'] = self._get_fb_dtsg()
+        if lsd is not None:
+            params['lsd'] = lsd
 
         with copy_session(self._session, self.request_timeout) as tmpsession:
             tmpsession.headers.update(self._default_http_header(empty_session_only=True))
@@ -624,10 +651,13 @@ class InstaloaderContext:
             tmpsession.headers['sec-fetch-site'] = 'same-origin'
             if friendly_name is not None:
                 tmpsession.headers['x-fb-friendly-name'] = friendly_name
+            if lsd is not None:
+                tmpsession.headers.update({'x-fb-lsd': lsd, 'sec-fetch-dest': 'empty', 'sec-fetch-mode': 'cors'})
             if referer is not None:
                 tmpsession.headers['referer'] = urllib.parse.quote(referer)
 
-            resp_json = self.get_json('graphql/query', params=params, session=tmpsession, use_post=True)
+            resp_json = self.get_json('api/graphql' if web_api else 'graphql/query', params=params,
+                                      session=tmpsession, use_post=True)
         # Queries sent with fb_dtsg get the web app's response shape, which has "data" but no "status".
         if 'status' not in resp_json and 'data' not in resp_json:
             self.error("GraphQL response did not contain a \"status\" field.")

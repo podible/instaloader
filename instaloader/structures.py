@@ -361,6 +361,7 @@ class Post:
                     "shortcode": self.shortcode,
                     "__relay_internal__pv__PolarisAIGMMediaWebLabelEnabledrelayprovider": False,
                 },
+                web_api=not self._context.is_logged_in,
             )
             web_info = (resp.get("data") or {}).get("xdt_api__v1__media__shortcode__web_info") or {}
             items = web_info.get("items")
