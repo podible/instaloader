@@ -24,7 +24,8 @@ from .lateststamps import LatestStamps
 from .nodeiterator import NodeIterator, resumable_iteration
 from .sectioniterator import SectionIterator
 from .structures import (Hashtag, Highlight, JsonExportable, Post, PostLocation, Profile, Story, StoryItem,
-                         load_structure_from_file, save_structure_to_file, PostSidecarNode, TitlePic)
+                         load_structure_from_file, save_structure_to_file, PostSidecarNode, TitlePic,
+                         _STORIES_DOC_ID, _STORIES_FRIENDLY_NAME, _STORIES_RELAY_PROVIDERS)
 
 
 def _get_config_dir() -> str:
@@ -906,9 +907,11 @@ class Instaloader:
                 yield userids[i:i + userids_per_query]
 
         for userid_chunk in _userid_chunks():
-            stories = self.context.graphql_query("303a4ae99711322310f25250d988f3b7",
-                                                 {"reel_ids": userid_chunk, "precomposed_overlay": False})["data"]
-            yield from (Story(self.context, media) for media in stories['reels_media'])
+            variables = {"reel_ids_arr": [str(userid) for userid in userid_chunk], **_STORIES_RELAY_PROVIDERS}
+            stories = self.context.doc_id_graphql_query(_STORIES_DOC_ID, variables,
+                                                        friendly_name=_STORIES_FRIENDLY_NAME)
+            reels = stories["data"]["xdt_api__v1__feed__reels_media"]["reels_media"]
+            yield from (Story.from_iphone_struct(self.context, reel) for reel in reels)
 
     @_requires_login
     def download_stories(self,

@@ -32,6 +32,13 @@ _PROFILE_POSTS_RELAY_PROVIDERS = {
     "__relay_internal__pv__PolarisThreadsStyleCommentsEnabledrelayprovider": False,
     "__relay_internal__pv__PolarisReelsRecoDebugOverlayEnabledrelayprovider": False,
 }
+# PolarisStoriesV3ReelPageStandaloneQuery as sent by the web app. Logged-in sessions that use the
+# legacy reels_media query_hash instead get feedback_required spam blocks.
+_STORIES_DOC_ID = "29170422829314651"
+_STORIES_FRIENDLY_NAME = "PolarisStoriesV3ReelPageStandaloneQuery"
+_STORIES_RELAY_PROVIDERS = {
+    "__relay_internal__pv__PolarisCommunityNoteStoriesLabelEnabledrelayprovider": True,
+}
 
 
 class PostSidecarNode(NamedTuple):
@@ -1325,7 +1332,10 @@ class Profile:
 
     @property
     def has_public_story(self) -> bool:
-        if not self._has_public_story:
+        if self._has_public_story is None and "latest_reel_media" in self._node:
+            # Set by PolarisProfilePostsQuery. The legacy query below gets logged-in sessions spam-blocked.
+            self._has_public_story = bool(self._node["latest_reel_media"])
+        if self._has_public_story is None:
             self._obtain_metadata()
             # query rate might be limited:
             data = self._context.graphql_query('9ca88e465c3f866a76f7adee3871bdd8',
@@ -1585,6 +1595,26 @@ class Profile:
                                                 {"user_id": str(self.userid), "include_chaining": True},
                                                 "https://www.instagram.com/{0}/"
                                                 .format(self.username))["data"]["user"]["edge_chaining"]["edges"])
+
+
+def _story_item_node_from_iphone_struct(item: Dict[str, Any], owner: Dict[str, Any]) -> Dict[str, Any]:
+    # StoryItem reads the last display/video resource, and iphone structs list the largest version first.
+    candidates = (item.get("image_versions2") or {}).get("candidates") or []
+    video_versions = item.get("video_versions") or []
+    is_video = item["media_type"] == 2
+    return {
+        "id": item["pk"],
+        "__typename": "GraphStoryVideo" if is_video else "GraphStoryImage",
+        "is_video": is_video,
+        "taken_at_timestamp": item["taken_at"],
+        "expiring_at_timestamp": item.get("expiring_at"),
+        "display_resources": [{"src": candidate["url"], "config_width": candidate.get("width"),
+                               "config_height": candidate.get("height")} for candidate in reversed(candidates)],
+        "video_resources": [{"src": version["url"]} for version in reversed(video_versions)],
+        "caption": (item.get("caption") or {}).get("text"),
+        "owner": owner,
+        "iphone_struct": item,
+    }
 
 
 class StoryItem:
@@ -1853,6 +1883,21 @@ class Story:
         self._unique_id: Optional[str] = None
         self._owner_profile: Optional[Profile] = None
         self._iphone_struct_: Optional[Dict[str, Any]] = None
+
+    @classmethod
+    def from_iphone_struct(cls, context: InstaloaderContext, reel: Dict[str, Any]):
+        """Create a story from a reel of the web app's reels_media query, whose items are iphone structs."""
+        owner = {"id": reel["user"]["id"], "username": reel["user"]["username"]}
+        node = {
+            "user": reel["user"],
+            "latest_reel_media": reel["latest_reel_media"],
+            "seen": reel.get("seen"),
+            "items": [_story_item_node_from_iphone_struct(item, owner) for item in reel["items"]],
+        }
+        story = cls(context, node)
+        # The items already carry their iphone struct, so get_items must not request reels_media again.
+        story._iphone_struct_ = reel
+        return story
 
     def __repr__(self):
         return '<Story by {} changed {:%Y-%m-%d_%H-%M-%S_UTC}>'.format(self.owner_username, self.latest_media_utc)
