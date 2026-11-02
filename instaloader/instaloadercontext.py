@@ -25,6 +25,29 @@ _LSD_RE = re.compile(r'"LSD",\[\],\{[^{}]*"token":"([^"]+)"')
 _PAGE_NAVIGATION_HEADERS = {'Accept': 'text/html', 'Sec-Fetch-Dest': 'document', 'Sec-Fetch-Mode': 'navigate',
                             'Sec-Fetch-Site': 'none'}
 _MAX_POST_REDIRECTS = 5
+_EMBEDDED_JSON_RE = re.compile(r'<script type="application/json"[^>]*>(.*?)</script>', re.DOTALL)
+
+
+def _embedded_query_data(obj: Any) -> Iterator[Dict[str, Any]]:
+    """Yield the data of each GraphQL query result in JSON that a page of www.instagram.com embeds."""
+    if isinstance(obj, dict):
+        result = obj['__bbox'].get('result') if isinstance(obj.get('__bbox'), dict) else None
+        if isinstance(result, dict) and isinstance(result.get('data'), dict):
+            yield result['data']
+        for value in obj.values():
+            yield from _embedded_query_data(value)
+    elif isinstance(obj, list):
+        for value in obj:
+            yield from _embedded_query_data(value)
+
+
+def embedded_page_data(html: str) -> List[Dict[str, Any]]:
+    """The ``data`` object of each GraphQL query result that a page of www.instagram.com embeds, in page order."""
+    data: List[Dict[str, Any]] = []
+    for script in _EMBEDDED_JSON_RE.finditer(html):
+        with suppress(json.decoder.JSONDecodeError):
+            data.extend(_embedded_query_data(json.loads(script.group(1))))
+    return data
 
 
 def _without_query(url: str) -> str:
@@ -604,6 +627,41 @@ class InstaloaderContext:
                     resp.url, resp.status_code, len(resp.text)))
             self._lsd = match.group(1)
         return self._lsd
+
+    def get_page_data(self, path: str) -> List[Dict[str, Any]]:
+        """Load a page of ``www.instagram.com`` as a logged-out visitor and return the data it embeds.
+
+        Instagram renders public profile pages with the results of their GraphQL queries embedded in the HTML.
+
+        :param path: URL, relative to ``www.instagram.com/``
+        :return: The ``data`` object of each query result that the page embeds, in page order.
+        :raises QueryReturnedNotFoundException: When the server responds with a 404.
+        :raises ConnectionException: When the request failed or was answered with anything but the page.
+        """
+        return embedded_page_data(self.get_page(path))
+
+    def get_page(self, path: str) -> str:
+        """Load a page of ``www.instagram.com`` as a logged-out visitor and return its HTML.
+
+        :param path: URL, relative to ``www.instagram.com/``
+        :raises QueryReturnedNotFoundException: When the server responds with a 404.
+        :raises ConnectionException: When the request failed or was answered with anything but the page.
+        """
+        url = 'https://www.instagram.com/{0}'.format(path)
+        self.do_sleep()
+        self._rate_controller.wait_before_query('other')
+        with self.get_anonymous_session() as anonymous_session:
+            try:
+                resp = anonymous_session.get(url, headers=_PAGE_NAVIGATION_HEADERS, allow_redirects=False)
+            except requests.exceptions.RequestException as err:
+                raise ConnectionException("Page request to {}: {}".format(url, err)) from err
+        if resp.status_code == 404:
+            raise QueryReturnedNotFoundException(self._response_error(resp))
+        if resp.status_code != 200:
+            location = resp.headers.get('location')
+            raise ConnectionException("Page request to {}: HTTP {}{}".format(
+                url, resp.status_code, " to " + _without_query(location) if location else ""))
+        return resp.text
 
     def doc_id_graphql_query(self, doc_id: str, variables: Dict[str, Any],
                              referer: Optional[str] = None, friendly_name: Optional[str] = None,

@@ -5,7 +5,8 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, os.getcwd())
 
-from instaloader.exceptions import ProfileNotExistsException
+from instaloader.exceptions import (ConnectionException, ProfileNoPostsException, ProfileNotExistsException,
+                                    ProfileNotFoundException, ProfileUnavailableException)
 from instaloader.structures import Profile
 
 CONNECTION = "xdt_api__v1__feed__user_timeline_graphql_connection"
@@ -75,8 +76,52 @@ class TestProfilePostsQuery(unittest.TestCase):
                       "invited_coauthor_producers": [{"username": "natgeo", "id": "1"}]}},
         ])
 
-        with self.assertRaises(ProfileNotExistsException):
+        with self.assertRaises(ProfileNoPostsException):
             Profile.from_username(self.context, "natgeo")
+
+    def test_from_username_ignores_the_case_of_the_requested_name(self):
+        self.query.return_value = timeline([{"node": {"user": {"username": "natgeo", "id": "1"}}}])
+
+        profile = Profile.from_username(self.context, "NatGeo")
+
+        self.assertEqual((profile.username, profile.userid), ("natgeo", 1))
+
+    def test_from_username_ignores_the_case_of_a_coauthor(self):
+        self.query.return_value = timeline([
+            {"node": {"user": {"username": "partner", "id": "2"},
+                      "coauthor_producers": [{"username": "natgeo", "id": "1"}]}},
+        ])
+
+        profile = Profile.from_username(self.context, "NatGeo")
+
+        self.assertEqual((profile.username, profile.userid), ("natgeo", 1))
+
+    def test_from_username_reports_a_missing_account(self):
+        self.query.return_value = {"errors": [{"message": "A server error field_exception occured.",
+                                               "code": 1357005}]}
+
+        with self.assertRaisesRegex(ProfileNotFoundException, "gone timeline query with field_exception 1357005"):
+            Profile.from_username(self.context, "gone")
+
+    def test_from_username_reports_an_empty_timeline_as_no_posts(self):
+        self.query.return_value = timeline([])
+
+        with self.assertRaisesRegex(ProfileNoPostsException, "returned 0 timeline posts for natgeo"):
+            Profile.from_username(self.context, "natgeo")
+
+    def test_from_username_keeps_other_failures_generic(self):
+        failures = [
+            {"errors": [{"message": "Something else", "code": 1}]},
+            {"data": {CONNECTION: None}},
+            ConnectionException("proxy failed"),
+        ]
+        for failure in failures:
+            with self.subTest(failure=failure):
+                self.query.side_effect = failure if isinstance(failure, Exception) else None
+                self.query.return_value = failure
+                with self.assertRaisesRegex(ProfileNotExistsException, "may have blocked you") as raised:
+                    Profile.from_username(self.context, "natgeo")
+                self.assertNotIsInstance(raised.exception, ProfileUnavailableException)
 
     def test_logged_in_get_posts_sends_current_query_on_every_page(self):
         profile = Profile(self.context, {"username": "natgeo", "id": "1"})
