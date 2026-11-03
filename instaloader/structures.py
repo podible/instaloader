@@ -36,6 +36,29 @@ _PROFILE_POSTS_RELAY_PROVIDERS = {
     "__relay_internal__pv__PolarisThreadsStyleCommentsEnabledrelayprovider": False,
     "__relay_internal__pv__PolarisReelsRecoDebugOverlayEnabledrelayprovider": False,
 }
+# PolarisProfilePageContentQuery as sent by the web app. The stale doc_id 26672929172408668 gets
+# feedback_required spam blocks.
+_PROFILE_PAGE_DOC_ID = "40158838120366999"
+_PROFILE_PAGE_FRIENDLY_NAME = "PolarisProfilePageContentQuery"
+_PROFILE_PAGE_RELAY_PROVIDERS = {
+    "__relay_internal__pv__PolarisCannesGuardianExperienceEnabledrelayprovider": True,
+    "__relay_internal__pv__PolarisCASB976ProfileEnabledrelayprovider": False,
+    "__relay_internal__pv__PolarisProfileInformTreatmentBannerEnabledrelayprovider": False,
+    "__relay_internal__pv__PolarisWebSchoolsEnabledrelayprovider": False,
+    "__relay_internal__pv__PolarisProfileRingsGradientEnabledrelayprovider": True,
+    "__relay_internal__pv__PolarisRepostsConsumptionEnabledrelayprovider": True,
+    "__relay_internal__pv__PolarisShortDramaEnabledrelayprovider": True,
+}
+
+
+def _profile_page_query(context: InstaloaderContext, user_id: Union[int, str]) -> Dict[str, Any]:
+    return context.doc_id_graphql_query(
+        _PROFILE_PAGE_DOC_ID,
+        {"enable_integrity_filters": True, "id": str(user_id), **_PROFILE_PAGE_RELAY_PROVIDERS},
+        friendly_name=_PROFILE_PAGE_FRIENDLY_NAME,
+    )
+
+
 # PolarisStoriesV3ReelPageStandaloneQuery as sent by the web app. Logged-in sessions that use the
 # legacy reels_media query_hash instead get feedback_required spam blocks.
 _STORIES_DOC_ID = "29170422829314651"
@@ -1113,17 +1136,7 @@ class Profile:
         """
         if profile_id in context.profile_id_cache:
             return context.profile_id_cache[profile_id]
-        resp = context.doc_id_graphql_query(
-            '26672929172408668',
-            {
-                "enable_integrity_filters": True,
-                "id": str(profile_id),
-                "__relay_internal__pv__PolarisCannesGuardianExperienceEnabledrelayprovider": True,
-                "__relay_internal__pv__PolarisCASB976ProfileEnabledrelayprovider": False,
-                "__relay_internal__pv__PolarisWebSchoolsEnabledrelayprovider": False,
-                "__relay_internal__pv__PolarisRepostsConsumptionEnabledrelayprovider": False,
-            },
-        )
+        resp = _profile_page_query(context, profile_id)
         user_data = (resp.get('data') or {}).get('user')
         if not user_data:
             raise ProfileNotExistsException("No profile found, the user may have blocked you (ID: " +
@@ -1175,15 +1188,7 @@ class Profile:
                 user_id = self._node.get('id') or self._node.get('pk')
                 if not user_id:
                     raise ProfileNotExistsException('Profile {} has no user ID.'.format(self.username))
-                variables = {
-                    "enable_integrity_filters": True,
-                    "id": str(user_id),
-                    "__relay_internal__pv__PolarisCannesGuardianExperienceEnabledrelayprovider": True,
-                    "__relay_internal__pv__PolarisCASB976ProfileEnabledrelayprovider": False,
-                    "__relay_internal__pv__PolarisWebSchoolsEnabledrelayprovider": False,
-                    "__relay_internal__pv__PolarisRepostsConsumptionEnabledrelayprovider": False,
-                }
-                data = self._context.doc_id_graphql_query('26672929172408668', variables)
+                data = _profile_page_query(self._context, user_id)
                 if data is None:
                     raise QueryReturnedNotFoundException('GraphQL query returned None')
                 user_data = data.get('data', {}).get('user')
