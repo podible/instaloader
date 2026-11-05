@@ -628,35 +628,48 @@ class InstaloaderContext:
             self._lsd = match.group(1)
         return self._lsd
 
-    def get_page_data(self, path: str) -> List[Dict[str, Any]]:
-        """Load a page of ``www.instagram.com`` as a logged-out visitor and return the data it embeds.
+    def get_page_data(self, path: str, logged_in: bool = False) -> List[Dict[str, Any]]:
+        """Load a page of ``www.instagram.com`` and return the data it embeds.
 
-        Instagram renders public profile pages with the results of their GraphQL queries embedded in the HTML.
+        Instagram renders public profile pages, and logged-in reels pages, with the results of their GraphQL
+        queries embedded in the HTML.
 
         :param path: URL, relative to ``www.instagram.com/``
+        :param logged_in: See :meth:`get_page`.
         :return: The ``data`` object of each query result that the page embeds, in page order.
         :raises QueryReturnedNotFoundException: When the server responds with a 404.
+        :raises AbortDownloadException: When a logged-in page request is redirected.
         :raises ConnectionException: When the request failed or was answered with anything but the page.
         """
-        return embedded_page_data(self.get_page(path))
+        return embedded_page_data(self.get_page(path, logged_in=logged_in))
 
-    def get_page(self, path: str) -> str:
-        """Load a page of ``www.instagram.com`` as a logged-out visitor and return its HTML.
+    def get_page(self, path: str, logged_in: bool = False) -> str:
+        """Load a page of ``www.instagram.com`` and return its HTML.
 
         :param path: URL, relative to ``www.instagram.com/``
+        :param logged_in: Send the session's cookies, as the logged-in web app does. Otherwise load the page as a
+           logged-out visitor.
         :raises QueryReturnedNotFoundException: When the server responds with a 404.
+        :raises AbortDownloadException: When a logged-in page request is redirected. Instagram redirects dead
+           sessions (e.g. to the same page, consent, accounts/suspended).
         :raises ConnectionException: When the request failed or was answered with anything but the page.
         """
         url = 'https://www.instagram.com/{0}'.format(path)
         self.do_sleep()
         self._rate_controller.wait_before_query('other')
-        with self.get_anonymous_session() as anonymous_session:
+        with self.get_anonymous_session() as page_session:
+            if logged_in:
+                # One value per cookie name, as in copy_session: after login() the jar also holds an empty sessionid.
+                page_session.cookies = requests.utils.cookiejar_from_dict(
+                    requests.utils.dict_from_cookiejar(self._session.cookies))
             try:
-                resp = anonymous_session.get(url, headers=_PAGE_NAVIGATION_HEADERS, allow_redirects=False)
+                resp = page_session.get(url, headers=_PAGE_NAVIGATION_HEADERS, allow_redirects=False)
             except requests.exceptions.RequestException as err:
                 raise ConnectionException("Page request to {}: {}".format(url, err)) from err
         if resp.status_code == 404:
             raise QueryReturnedNotFoundException(self._response_error(resp))
+        if logged_in and resp.is_redirect:
+            raise AbortDownloadException("{} redirected to {}".format(url, _without_query(resp.headers['location'])))
         if resp.status_code != 200:
             location = resp.headers.get('location')
             raise ConnectionException("Page request to {}: HTTP {}{}".format(
