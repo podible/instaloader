@@ -79,8 +79,18 @@ class TestReelsPage(unittest.TestCase):
         # Pages of some sessions show the reels feed without the reel.
         self.page_session.get.return_value = page({"xdt_api__v1__clips__home__connection_v2": {"edges": []}})
 
-        with self.assertRaisesRegex(BadResponseException, "does not embed the reel"):
+        with self.assertRaisesRegex(BadResponseException, "does not embed the post"):
             Post.from_reels_page(self.context, SHORTCODE)
+
+    def test_photo_post_comes_from_the_reels_page(self):
+        photo = media("Deze7yCF7U3", None)
+        photo.update(media_type=1, video_versions=None)
+        self.page_session.get.return_value = page({"xig_fetch_media": photo})
+
+        post = Post.from_reels_page(self.context, "Deze7yCF7U3")
+
+        self.assertFalse(post.is_video)
+        self.assertEqual(post.url, "https://scontent.cdninstagram.com/cover.jpg")
 
     def test_redirect_of_logged_in_page_names_the_target(self):
         self.page_session.get.return_value = page(

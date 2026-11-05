@@ -263,19 +263,19 @@ class Post:
 
     @classmethod
     def from_reels_page(cls, context: InstaloaderContext, shortcode: str):
-        """Create a post object for a reel from its logged-in reels page.
+        """Create a post object from its logged-in reels page, for reels and photo posts alike.
 
-        The page embeds the web app's query for the reel, which Instagram only answers while rendering the page.
-        It embeds it for some sessions only; the page of other sessions shows the reels feed without the reel.
+        The page embeds the web app's query for the post, which Instagram only answers while rendering the page.
+        It embeds it for some sessions only; the page of other sessions shows the reels feed without the post.
 
-        :raises BadResponseException: When the page does not embed the reel.
+        :raises BadResponseException: When the page does not embed the post.
         :raises AbortDownloadException: When the page request is redirected, as it is for dead sessions.
         """
         # pylint:disable=protected-access
         media = next((data['xig_fetch_media'] for data in context.get_page_data(f"reels/{shortcode}/", logged_in=True)
                       if (data.get('xig_fetch_media') or {}).get('code') == shortcode), None)
         if media is None:
-            raise BadResponseException(f"The reels page of {shortcode} does not embed the reel.")
+            raise BadResponseException(f"The reels page of {shortcode} does not embed the post.")
         post = cls(context, {'shortcode': shortcode})
         post._full_metadata_dict = cls._normalize_post_data(media)
         post._node = post._full_metadata_dict
