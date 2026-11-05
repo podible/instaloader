@@ -262,6 +262,26 @@ class Post:
         return post
 
     @classmethod
+    def from_reels_page(cls, context: InstaloaderContext, shortcode: str):
+        """Create a post object for a reel from its logged-in reels page.
+
+        The page embeds the web app's query for the reel, which Instagram only answers while rendering the page.
+        It embeds it for some sessions only; the page of other sessions shows the reels feed without the reel.
+
+        :raises BadResponseException: When the page does not embed the reel.
+        :raises AbortDownloadException: When the page request is redirected, as it is for dead sessions.
+        """
+        # pylint:disable=protected-access
+        media = next((data['xig_fetch_media'] for data in context.get_page_data(f"reels/{shortcode}/", logged_in=True)
+                      if (data.get('xig_fetch_media') or {}).get('code') == shortcode), None)
+        if media is None:
+            raise BadResponseException(f"The reels page of {shortcode} does not embed the reel.")
+        post = cls(context, {'shortcode': shortcode})
+        post._full_metadata_dict = cls._normalize_post_data(media)
+        post._node = post._full_metadata_dict
+        return post
+
+    @classmethod
     def from_mediaid(cls, context: InstaloaderContext, mediaid: int):
         """Create a post object from a given mediaid"""
         return cls.from_shortcode(context, Post.mediaid_to_shortcode(mediaid))
@@ -379,9 +399,86 @@ class Post:
     def __hash__(self) -> int:
         return hash(self.shortcode)
 
+    @staticmethod
+    def _normalize_post_data(media: Dict[str, Any]) -> Dict[str, Any]:
+        """The GraphQL node of a post from the web app's media item."""
+        media_types: Dict[Any, str] = {1: "GraphImage", 2: "GraphVideo", 8: "GraphSidecar"}
+        media_type = media.get("media_type")
+        typename = media_types.get(media_type)
+        if not typename:
+            raise BadResponseException(f"Unknown media_type in metadata: {media_type}.")
+        pic_json: Dict[str, Any] = {
+            "shortcode": media["code"],
+            "id": media["pk"],
+            "__typename": typename,
+            "is_video": media_type == 2,
+            "taken_at_timestamp": media["taken_at"],
+            "owner": {
+                "id": media["user"]["pk"],
+                "username": media["user"].get("username", ""),
+                "full_name": media["user"].get("full_name", ""),
+            },
+        }
+        candidates = (media.get("image_versions2") or {}).get("candidates") or []
+        if candidates:
+            pic_json["display_url"] = candidates[0]["url"]
+        video_versions = media.get("video_versions") or []
+        if video_versions:
+            pic_json["video_url"] = video_versions[0]["url"]
+        if media.get("video_duration") is not None:
+            pic_json["video_duration"] = media["video_duration"]
+        if media.get("view_count") is not None:
+            pic_json["video_view_count"] = media["view_count"]
+        if media.get("play_count") is not None:
+            pic_json["video_play_count"] = media["play_count"]
+        caption = media.get("caption")
+        caption_text = caption.get("text") if isinstance(caption, dict) else None
+        pic_json["edge_media_to_caption"] = (
+            {"edges": [{"node": {"text": caption_text}}]} if caption_text is not None
+            else {"edges": []}
+        )
+        pic_json["edge_media_preview_like"] = {"count": media.get("like_count") or 0}
+        pic_json["edge_media_to_parent_comment"] = {
+            "count": media.get("comment_count") or 0,
+            "edges": [],
+        }
+        if media.get("has_liked") is not None:
+            pic_json["viewer_has_liked"] = media["has_liked"]
+        if media.get("accessibility_caption") is not None:
+            pic_json["accessibility_caption"] = media["accessibility_caption"]
+        if media.get("location"):
+            pic_json["location"] = media["location"]
+        carousel = media.get("carousel_media") or []
+        if carousel:
+            carousel_nodes = []
+            for item in carousel:
+                item_type = item.get("media_type", 1)
+                node: Dict[str, Any] = {
+                    "shortcode": item.get("code", ""),
+                    "__typename": media_types.get(item_type, "GraphImage"),
+                    "is_video": item_type == 2,
+                }
+                item_candidates = (item.get("image_versions2") or {}).get("candidates") or []
+                node["display_url"] = item_candidates[0]["url"] if item_candidates else ""
+                item_videos = item.get("video_versions") or []
+                node["video_url"] = item_videos[0]["url"] if item_videos else None
+                if item.get("accessibility_caption") is not None:
+                    node["accessibility_caption"] = item["accessibility_caption"]
+                carousel_nodes.append({"node": node})
+            pic_json["edge_sidecar_to_children"] = {"edges": carousel_nodes}
+        tagged = (media.get("usertags") or {}).get("in") or []
+        if tagged:
+            pic_json["edge_media_to_tagged_user"] = {
+                "edges": [
+                    {"node": {"user": {"username": t["user"]["username"].lower()}}}
+                    for t in tagged
+                    if (t.get("user") or {}).get("username")
+                ]
+            }
+        return pic_json
+
     def _obtain_metadata(self):
         if not self._full_metadata_dict:
-            media_types = {1: "GraphImage", 2: "GraphVideo", 8: "GraphSidecar"}
             resp = self._context.doc_id_graphql_query(
                 "27128499623469141",
                 {
@@ -394,80 +491,7 @@ class Post:
             items = web_info.get("items")
             if not items:
                 raise BadResponseException("Fetching Post metadata failed.")
-            media = items[0]
-            media_type = media.get("media_type")
-            typename = media_types.get(media_type)
-            if not typename:
-                raise BadResponseException(f"Unknown media_type in metadata: {media_type}.")
-            pic_json: Dict[str, Any] = {
-                "shortcode": media["code"],
-                "id": media["pk"],
-                "__typename": typename,
-                "is_video": media_type == 2,
-                "taken_at_timestamp": media["taken_at"],
-                "owner": {
-                    "id": media["user"]["pk"],
-                    "username": media["user"].get("username", ""),
-                    "full_name": media["user"].get("full_name", ""),
-                },
-            }
-            candidates = (media.get("image_versions2") or {}).get("candidates") or []
-            if candidates:
-                pic_json["display_url"] = candidates[0]["url"]
-            video_versions = media.get("video_versions") or []
-            if video_versions:
-                pic_json["video_url"] = video_versions[0]["url"]
-            if media.get("video_duration") is not None:
-                pic_json["video_duration"] = media["video_duration"]
-            if media.get("view_count") is not None:
-                pic_json["video_view_count"] = media["view_count"]
-            if media.get("play_count") is not None:
-                pic_json["video_play_count"] = media["play_count"]
-            caption = media.get("caption")
-            caption_text = caption.get("text") if isinstance(caption, dict) else None
-            pic_json["edge_media_to_caption"] = (
-                {"edges": [{"node": {"text": caption_text}}]} if caption_text is not None
-                else {"edges": []}
-            )
-            pic_json["edge_media_preview_like"] = {"count": media.get("like_count") or 0}
-            pic_json["edge_media_to_parent_comment"] = {
-                "count": media.get("comment_count") or 0,
-                "edges": [],
-            }
-            if media.get("has_liked") is not None:
-                pic_json["viewer_has_liked"] = media["has_liked"]
-            if media.get("accessibility_caption") is not None:
-                pic_json["accessibility_caption"] = media["accessibility_caption"]
-            if media.get("location"):
-                pic_json["location"] = media["location"]
-            carousel = media.get("carousel_media") or []
-            if carousel:
-                carousel_nodes = []
-                for item in carousel:
-                    item_type = item.get("media_type", 1)
-                    node: Dict[str, Any] = {
-                        "shortcode": item.get("code", ""),
-                        "__typename": media_types.get(item_type, "GraphImage"),
-                        "is_video": item_type == 2,
-                    }
-                    item_candidates = (item.get("image_versions2") or {}).get("candidates") or []
-                    node["display_url"] = item_candidates[0]["url"] if item_candidates else ""
-                    item_videos = item.get("video_versions") or []
-                    node["video_url"] = item_videos[0]["url"] if item_videos else None
-                    if item.get("accessibility_caption") is not None:
-                        node["accessibility_caption"] = item["accessibility_caption"]
-                    carousel_nodes.append({"node": node})
-                pic_json["edge_sidecar_to_children"] = {"edges": carousel_nodes}
-            tagged = (media.get("usertags") or {}).get("in") or []
-            if tagged:
-                pic_json["edge_media_to_tagged_user"] = {
-                    "edges": [
-                        {"node": {"user": {"username": t["user"]["username"].lower()}}}
-                        for t in tagged
-                        if (t.get("user") or {}).get("username")
-                    ]
-                }
-            self._full_metadata_dict = pic_json
+            self._full_metadata_dict = Post._normalize_post_data(items[0])
             if self.shortcode != self._full_metadata_dict['shortcode']:
                 self._node.update(self._full_metadata_dict)
                 raise PostChangedException
