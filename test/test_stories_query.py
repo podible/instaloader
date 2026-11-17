@@ -89,6 +89,23 @@ class TestStoriesQuery(unittest.TestCase):
         self.assertEqual(image.owner_username, "natgeo")
         self.loader.context.get_iphone_json.assert_not_called()
 
+    def test_skips_story_items_without_image_candidates(self):
+        no_candidates = image_item("3", 1793302000)
+        no_candidates["image_versions2"] = {"candidates": []}
+        no_image_versions = image_item("4", 1793303000)
+        del no_image_versions["image_versions2"]
+        self.query.return_value = reels_media(image_item("2", 1793301358), no_candidates, no_image_versions)
+
+        [story] = list(self.loader.get_stories([787132]))
+        items = list(story.get_items())
+
+        self.assertEqual([item.mediaid for item in items], [2])
+        self.assertEqual(items[0].url, "https://cdn/2.jpg")
+        self.assertEqual(story.itemcount, 1)
+        errors = [call.args[0] for call in self.loader.context.error.call_args_list]
+        self.assertTrue(any("Skipping story item 3 of natgeo" in message for message in errors))
+        self.assertTrue(any("Skipping story item 4 of natgeo" in message for message in errors))
+
 
 class TestHasPublicStory(unittest.TestCase):
     def setUp(self):
