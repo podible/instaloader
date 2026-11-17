@@ -1965,7 +1965,6 @@ class Story:
         """Create a story from a reel of the web app's reels_media query, whose items are iphone structs."""
         owner = {"id": reel["user"]["id"], "username": reel["user"]["username"]}
         items = [_story_item_node_from_iphone_struct(item, owner) for item in reel["items"]]
-        # StoryItem.url needs an image. Unlike the legacy reels_media query, this one can return an item without one.
         for item in items:
             if not item["display_resources"]:
                 context.error(f"Skipping story item {item['id']} of {owner['username']} without image candidates")
